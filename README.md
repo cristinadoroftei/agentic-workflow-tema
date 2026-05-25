@@ -89,6 +89,22 @@ prompt: |
 
 Loaded and rendered at runtime via `PromptRegistry`.
 
+### Agent Modes
+
+The agent supports switching between prompt modes at runtime:
+
+| Mode | Purpose | Example question |
+|------|---------|-----------------|
+| `planner` | Breaks complex questions into steps | "What is 15% of 230 and what time is it in Tokyo?" |
+| `analyst` | Researches and provides detailed analysis | "Search for Rome and analyze the key facts" |
+| `summary` | Returns short, concise answers | "Search for Python and summarize it" |
+| `extract` | Pulls specific data points | "What time is it in London, Bucharest, and Tokyo?" |
+
+Commands during chat:
+- `/mode <name>` — switch to a different mode (resets conversation)
+- `/modes` — list available modes
+- `exit` — quit the agent
+
 ## ReAct Pattern
 
 The agent follows a Think -> Act -> Observe loop:
@@ -105,7 +121,8 @@ Iteration 2 (Final answer):
 ```
 
 Features:
-- `max_iterations` safety limit (default: 5)
-- Error handling — tool errors are returned to the LLM as text, not crashes
+- `max_iterations` safety limit (default: 10)
+- Error handling — tool errors and rate limits are returned to the LLM as text, not crashes
 - Multiple tool calls per iteration
 - Session history — follow-up questions have full conversation context
+- Graceful provider fallback — if one LLM provider fails, the next one is tried automatically

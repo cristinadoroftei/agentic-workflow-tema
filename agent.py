@@ -10,7 +10,7 @@ from prompts.registry import get_prompt_registry
 
 # --- Configuration ---
 load_dotenv()
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 10
 
 # Provider registry — factory pattern
 # Each provider has: base_url, model, headers builder, and how to build the request body
@@ -95,7 +95,10 @@ def react_loop(messages: list[dict]) -> str:
         print(f"\n--- Iteration {i + 1} ---")
 
         # THINK: ask the LLM what to do
-        assistant_msg = call_llm(messages, tool_catalog)
+        try:
+            assistant_msg = call_llm(messages, tool_catalog)
+        except RuntimeError as e:
+            return f"Error: {e}. Please wait a moment and try again (rate limit)."
         messages.append(assistant_msg)
 
         # If no tool calls -> the LLM has a final answer
@@ -125,31 +128,57 @@ def react_loop(messages: list[dict]) -> str:
 
 # --- Sub-step C: Main entry point ---
 
+# Default Jinja2 variables per prompt template
+PROMPT_DEFAULTS = {
+    "planner": {"role": "planning assistant", "domain": "general knowledge", "max_words": 300},
+    "analyst": {"role": "data analyst", "domain": "research and analysis"},
+    "summary": {"role": "summarization expert", "domain": "concise communication", "max_words": 150},
+    "extract": {"role": "information extraction specialist", "domain": "data extraction", "format": "bullet points"},
+}
+
+
+def build_system_prompt(registry, tool_names: str, prompt_name: str) -> str:
+    """Render a system prompt by name with its default variables."""
+    defaults = PROMPT_DEFAULTS[prompt_name]
+    return registry.render(prompt_name, tools=tool_names, **defaults)
+
+
 def main():
-    # Load the planner prompt and render it with our tools
     registry = get_prompt_registry()
     tool_names = ", ".join(t["name"] for t in ToolWrapper.catalog())
+    available = registry.list_templates()
 
-    system_prompt = registry.render(
-        "planner",
-        role="QA assistant",
-        domain="general knowledge",
-        tools=tool_names,
-        max_words=300,
-    )
+    # Let the user pick a starting mode
+    print("Available modes:", ", ".join(available))
+    print("Commands: /mode <name> to switch, /modes to list, exit to quit\n")
 
-    print("System prompt:")
-    print(system_prompt)
-    print("=" * 50)
-
-    # Session messages — persists across questions so the agent has context
+    current_mode = "planner"
+    system_prompt = build_system_prompt(registry, tool_names, current_mode)
     messages = [{"role": "system", "content": system_prompt}]
+    print(f"[Mode: {current_mode}]")
 
     # Interactive chat loop
     while True:
         question = input("\nYou: ").strip()
         if question.lower() in ("exit", "quit"):
             break
+
+        # Command: list available modes
+        if question == "/modes":
+            print(f"Available: {', '.join(available)}  (current: {current_mode})")
+            continue
+
+        # Command: switch mode
+        if question.startswith("/mode "):
+            new_mode = question.split(" ", 1)[1].strip()
+            if new_mode not in available:
+                print(f"Unknown mode '{new_mode}'. Available: {', '.join(available)}")
+                continue
+            current_mode = new_mode
+            system_prompt = build_system_prompt(registry, tool_names, current_mode)
+            messages = [{"role": "system", "content": system_prompt}]
+            print(f"[Switched to: {current_mode}] (conversation reset)")
+            continue
 
         messages.append({"role": "user", "content": question})
         answer = react_loop(messages)

@@ -31,8 +31,8 @@ def get_datetime(params: GetDatetimeParams) -> str:
 def web_search(params: WebSearchParams) -> str:
     """Searches the web for information and returns a list of results."""
     response = httpx.get(
-        "https://duckduckgo.com/",
-        params={"q": params.query, "format": "json"},
+        "https://api.duckduckgo.com/",
+        params={"q": params.query, "format": "json", "no_html": 1},
         headers={"User-Agent": "QAAgent/1.0"},
         timeout=10.0,
     )
@@ -43,12 +43,19 @@ def web_search(params: WebSearchParams) -> str:
     if data.get("AbstractText"):
         results.append(f"Summary: {data['AbstractText']}")
 
-    # RelatedTopics are the search result snippets
-    for topic in data.get("RelatedTopics", [])[:params.max_results]:
+    # Collect topics — some are direct, some are nested in sub-groups
+    all_topics = []
+    for topic in data.get("RelatedTopics", []):
         if "Text" in topic:
-            results.append(topic["Text"])
+            all_topics.append(topic["Text"])
+        elif "Topics" in topic:
+            for sub in topic["Topics"]:
+                if "Text" in sub:
+                    all_topics.append(sub["Text"])
+
+    results.extend(all_topics[:params.max_results])
 
     if not results:
-        return f"No results found for '{params.query}'."
+        return f"No results found for '{params.query}'. Try a broader or simpler query."
 
     return "\n".join(results)
