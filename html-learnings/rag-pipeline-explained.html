@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From PDF to RAG: How the HNSW Index Works</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  h1 { text-align: center; font-size: 1.8rem; margin: 20px 0 6px; color: #f8fafc; }
+  .subtitle { text-align: center; color: #94a3b8; margin-bottom: 30px; }
+  .section { background: #1e293b; border-radius: 12px; padding: 28px; margin-bottom: 28px; border: 1px solid #334155; }
+  .section h2 { font-size: 1.25rem; margin-bottom: 6px; color: #38bdf8; }
+  .section .desc { color: #94a3b8; margin-bottom: 18px; font-size: 0.93rem; }
+  svg { display: block; margin: 0 auto; }
+  svg text { font-family: 'Segoe UI', system-ui, sans-serif; }
+  button { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.2s; }
+  .btn-primary { background: #2563eb; color: white; }
+  .btn-primary:hover { background: #3b82f6; }
+  .btn-secondary { background: #334155; color: #e2e8f0; }
+  .btn-secondary:hover { background: #475569; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .log-panel {
+    background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+    padding: 14px; margin-top: 14px; max-height: 200px; overflow-y: auto;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.82rem; line-height: 1.8;
+  }
+  .log-panel .info { color: #38bdf8; }
+  .log-panel .good { color: #4ade80; }
+  .log-panel .bad { color: #f87171; }
+  .log-panel .highlight { color: #facc15; font-weight: 600; }
+  .log-panel .step { color: #94a3b8; }
+
+  .callout {
+    background: #0f172a; border-left: 3px solid #f59e0b; padding: 14px 18px;
+    border-radius: 0 8px 8px 0; margin: 16px 0; font-size: 0.9rem;
+  }
+  .callout strong { color: #fbbf24; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 0.85rem; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 50%; }
+
+  select, input[type=range] {
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 4px; padding: 4px 8px; font-size: 0.85rem;
+  }
+  .control-group { display: flex; flex-direction: column; gap: 2px; }
+  .control-group label { font-size: 0.8rem; color: #94a3b8; }
+  .control-group .value { font-size: 0.85rem; color: #38bdf8; font-weight: 600; }
+
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px; }
+  .compare-box { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 18px; }
+  .compare-box h3 { font-size: 1rem; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>From PDF to RAG: The Full Pipeline</h1>
+<p class="subtitle">How documents become searchable vectors, and why the HNSW index is ONE graph</p>
+
+<!-- ============================================================ -->
+<!-- SECTION 1: The Pipeline -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>1. The Pipeline: PDF to Searchable Vectors</h2>
+  <p class="desc">Click each step to see what happens to a PDF document as it goes through the RAG pipeline.</p>
+  <div class="controls">
+    <button class="btn-primary" id="pipe-next">Next Step</button>
+    <button class="btn-secondary" id="pipe-reset">Reset</button>
+  </div>
+  <svg id="svg-pipeline" width="1050" height="900"></svg>
+  <div class="log-panel" id="pipe-log"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 2: The HNSW Index IS one graph -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>2. The Index = ONE Graph Over ALL Chunks</h2>
+  <p class="desc">Each chunk is a <strong>node</strong>. Each edge means "these two chunks are close in vector space." The parameter <code>m</code> controls how many edges each node gets. This is the <strong>single HNSW index</strong> for the entire table.</p>
+
+  <div class="callout">
+    <strong>Common misconception:</strong> "Each chunk gets its own small graph."<br>
+    <strong>Reality:</strong> There is ONE graph. Each chunk is ONE node in that graph. When you insert a new chunk, it becomes a new node connected to its m nearest existing nodes. The graph grows, but it stays one unified structure.
+  </div>
+
+  <div class="controls">
+    <button class="btn-primary" id="graph-build">Build Index (insert chunks one by one)</button>
+    <button class="btn-secondary" id="graph-reset">Reset</button>
+    <div class="control-group">
+      <label>m (edges per node)</label>
+      <input type="range" id="graph-m" min="2" max="4" value="2">
+      <span class="value" id="graph-m-val">m = 2</span>
+    </div>
+    <div class="control-group">
+      <label>Speed</label>
+      <select id="graph-speed">
+        <option value="1000">Slow</option>
+        <option value="500" selected>Normal</option>
+        <option value="250">Fast</option>
+      </select>
+    </div>
+  </div>
+  <svg id="svg-graph" width="1050" height="480"></svg>
+  <div class="log-panel" id="graph-log"></div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> contract_servicii.pdf</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> factura_001.pdf</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> factura_002.pdf</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> contract_consultanta.pdf</div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 3: Query time — search the graph -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>3. Query Time: Searching the Graph</h2>
+  <p class="desc">A user asks a question. It gets embedded into a vector, then the HNSW graph is traversed to find the nearest chunk nodes. The <code>&lt;=&gt;</code> operator computes cosine distance at each step.</p>
+  <div class="controls">
+    <button class="btn-primary" id="search-run">Search: "Care sunt penalitatile de intarziere?"</button>
+    <button class="btn-secondary" id="search-reset">Reset</button>
+  </div>
+  <svg id="svg-search" width="1050" height="480"></svg>
+  <div class="log-panel" id="search-log"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 4: HNSW vs IVFFlat -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>4. HNSW vs IVFFlat</h2>
+  <p class="desc">Two different ways to organize vectors for fast search. Same data, different index structures.</p>
+  <div class="compare-grid">
+    <div class="compare-box">
+      <h3 style="color:#38bdf8">HNSW (graph-based)</h3>
+      <svg id="svg-hnsw-cmp" width="480" height="300"></svg>
+      <p style="color:#94a3b8; font-size:0.85rem; margin-top:8px;">
+        Each vector = node. Edges connect similar vectors.<br>
+        Search: traverse edges greedily toward query.<br>
+        <span style="color:#4ade80">+ Fast queries (~2ms)</span><br>
+        <span style="color:#f87171">- High RAM (stores graph in memory)</span>
+      </p>
+    </div>
+    <div class="compare-box">
+      <h3 style="color:#a78bfa">IVFFlat (cluster-based)</h3>
+      <svg id="svg-ivf-cmp" width="480" height="300"></svg>
+      <p style="color:#94a3b8; font-size:0.85rem; margin-top:8px;">
+        Vectors grouped into clusters by centroids.<br>
+        Search: find nearest centroid, scan that cluster.<br>
+        <span style="color:#4ade80">+ Less RAM</span><br>
+        <span style="color:#f87171">- Slower, can miss results at cluster boundaries</span>
+      </p>
+    </div>
+  </div>
+</div>
+
+</div><!-- container -->
+
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// SECTION 1: Pipeline visualization
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-pipeline");
+  const logEl = document.getElementById("pipe-log");
+  const btnNext = document.getElementById("pipe-next");
+  const btnReset = document.getElementById("pipe-reset");
+
+  let step = 0;
+  const maxSteps = 5;
+
+  function log(html) {
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function drawStep(s) {
+    svg.innerHTML = "";
+    const W = 1050, H = 520;
+
+    // Step boxes positions
+    const steps = [
+      { x: 60,  y: 40, w: 160, h: 100, label: "PDF Documents",    color: "#64748b", active: s >= 0 },
+      { x: 270, y: 40, w: 160, h: 100, label: "Text Chunks",      color: "#8b5cf6", active: s >= 1 },
+      { x: 480, y: 40, w: 160, h: 100, label: "Embedding Model",  color: "#f59e0b", active: s >= 2 },
+      { x: 690, y: 40, w: 160, h: 100, label: "Vectors in DB",    color: "#22c55e", active: s >= 3 },
+      { x: 900, y: 40, w: 120, h: 100, label: "HNSW Index",       color: "#ef4444", active: s >= 4 },
+    ];
+
+    // Arrows between steps
+    for (let i = 0; i < steps.length - 1; i++) {
+      const from = steps[i], to = steps[i+1];
+      const active = s > i;
+      el("line", {
+        x1: from.x + from.w, y1: from.y + from.h/2,
+        x2: to.x, y2: to.y + to.h/2,
+        stroke: active ? "#f8fafc" : "#334155", "stroke-width": 2,
+        "marker-end": "url(#arrow)"
+      }, svg);
+    }
+
+    // Arrow marker
+    const defs = el("defs", {}, svg);
+    const marker = el("marker", { id: "arrow", markerWidth: 10, markerHeight: 7, refX: 9, refY: 3.5, orient: "auto" }, defs);
+    el("polygon", { points: "0 0, 10 3.5, 0 7", fill: "#f8fafc" }, marker);
+
+    // Step boxes
+    steps.forEach((st, i) => {
+      const opacity = st.active ? 1 : 0.3;
+      el("rect", {
+        x: st.x, y: st.y, width: st.w, height: st.h, rx: 8,
+        fill: st.active ? st.color : "#1e293b",
+        stroke: st.color, "stroke-width": 2, opacity
+      }, svg);
+      el("text", {
+        x: st.x + st.w/2, y: st.y + st.h/2 + 5,
+        "text-anchor": "middle", fill: "#f8fafc", "font-size": "12", "font-weight": "600", opacity
+      }, svg).textContent = st.label;
+    });
+
+    // Detail area below
+    const detailY = 170;
+
+    if (s >= 0) {
+      // Show PDFs
+      const pdfs = ["contract_servicii.pdf", "factura_001.pdf", "factura_002.pdf"];
+      pdfs.forEach((name, i) => {
+        const x = 40 + i * 130, y = detailY;
+        el("rect", { x, y, width: 115, height: 60, rx: 4, fill: "#1e293b", stroke: "#64748b", "stroke-width": 1 }, svg);
+        el("text", { x: x+57, y: y+25, "text-anchor": "middle", fill: "#94a3b8", "font-size": "9" }, svg).textContent = name;
+        el("text", { x: x+57, y: y+45, "text-anchor": "middle", fill: "#64748b", "font-size": "22" }, svg).textContent = "PDF";
+      });
+    }
+
+    if (s >= 1) {
+      // Show chunks
+      const chunkY = detailY + 80;
+      el("text", { x: 40, y: chunkY, fill: "#8b5cf6", "font-size": "12", "font-weight": "600" }, svg).textContent = "RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)";
+
+      const chunks = [
+        { label: "contract chunk 0", color: "#ef4444", text: "Rezilierea contractului\nse face cu preaviz..." },
+        { label: "contract chunk 1", color: "#ef4444", text: "Penalitatile pentru\nintarziere sunt 0.1%..." },
+        { label: "contract chunk 2", color: "#ef4444", text: "Plata se efectueaza in\ntermen de 14 zile..." },
+        { label: "factura_001 chunk 0", color: "#f59e0b", text: "Factura nr. 2024-001\nClient: ACME SRL..." },
+        { label: "factura_001 chunk 1", color: "#f59e0b", text: "Total: 5.200 RON\nTVA: 988 RON..." },
+        { label: "factura_002 chunk 0", color: "#22c55e", text: "Factura nr. 2024-002\nClient: Beta Corp..." },
+      ];
+
+      chunks.forEach((c, i) => {
+        const x = 40 + (i % 6) * 165, y = chunkY + 15 + Math.floor(i / 6) * 70;
+        el("rect", { x, y, width: 155, height: 55, rx: 4, fill: "#0f172a", stroke: c.color, "stroke-width": 1 }, svg);
+        el("text", { x: x+5, y: y+15, fill: c.color, "font-size": "9", "font-weight": "600" }, svg).textContent = c.label;
+        c.text.split("\n").forEach((line, li) => {
+          el("text", { x: x+5, y: y+28+li*12, fill: "#94a3b8", "font-size": "9" }, svg).textContent = line;
+        });
+      });
+    }
+
+    if (s >= 2) {
+      // Show embedding
+      const embY = detailY + 175;
+      el("text", { x: 40, y: embY, fill: "#f59e0b", "font-size": "12", "font-weight": "600" }, svg).textContent = 'model = OpenAIEmbeddings("text-embedding-3-small")  # 1536 dimensions';
+
+      el("text", { x: 40, y: embY + 25, fill: "#94a3b8", "font-size": "11" }, svg).textContent = '"Rezilierea contractului se face cu preaviz..."';
+      el("text", { x: 60, y: embY + 42, fill: "#f59e0b", "font-size": "10", "font-weight":"600" }, svg).textContent = "-> [0.0234, -0.0891, 0.0412, ..., 0.0156]  (1536 floats)";
+
+      el("text", { x: 40, y: embY + 62, fill: "#94a3b8", "font-size": "11" }, svg).textContent = '"Penalitatile pentru intarziere sunt 0.1%..."';
+      el("text", { x: 60, y: embY + 79, fill: "#f59e0b", "font-size": "10", "font-weight":"600" }, svg).textContent = "-> [0.0178, -0.0543, 0.0891, ..., -0.0234]  (1536 floats)";
+
+      el("text", { x: 40, y: embY + 99, fill: "#94a3b8", "font-size": "11" }, svg).textContent = '"Factura nr. 2024-001 Client: ACME SRL..."';
+      el("text", { x: 60, y: embY + 116, fill: "#f59e0b", "font-size": "10", "font-weight":"600" }, svg).textContent = "-> [-0.0312, 0.0765, 0.0198, ..., 0.0443]  (1536 floats)";
+
+      el("text", { x: 80, y: embY + 140, fill: "#64748b", "font-size": "11", "font-style":"italic" }, svg).textContent = "Same model for ALL chunks. Each text becomes a point in 1536-dimensional space.";
+    }
+
+    if (s >= 3) {
+      // Show DB table
+      const tblY = detailY + 350;
+      el("text", { x: 40, y: tblY, fill: "#22c55e", "font-size": "12", "font-weight": "600" }, svg).textContent = "PostgreSQL table: document_chunks";
+
+      const cols = ["id", "document_id", "chunk_index", "content", "embedding"];
+      const colW = [40, 100, 85, 220, 350];
+      let cx = 40;
+      cols.forEach((c, i) => {
+        el("rect", { x: cx, y: tblY + 8, width: colW[i], height: 22, fill: "#334155", stroke: "#475569", "stroke-width": 1 }, svg);
+        el("text", { x: cx + 5, y: tblY + 23, fill: "#f8fafc", "font-size": "9", "font-weight": "600" }, svg).textContent = c;
+        cx += colW[i];
+      });
+
+      const rows = [
+        ["1", "contract_srv", "0", "Rezilierea contractului...", "[0.023, -0.089, 0.041, ..., 0.015]"],
+        ["2", "contract_srv", "1", "Penalitatile pt intarziere...", "[0.017, -0.054, 0.089, ..., -0.023]"],
+        ["3", "factura_001", "0", "Factura nr. 2024-001...", "[-0.031, 0.076, 0.019, ..., 0.044]"],
+      ];
+
+      rows.forEach((row, ri) => {
+        cx = 40;
+        row.forEach((val, ci) => {
+          el("rect", { x: cx, y: tblY + 30 + ri * 20, width: colW[ci], height: 20, fill: "#1e293b", stroke: "#334155", "stroke-width": 1 }, svg);
+          el("text", { x: cx + 5, y: tblY + 44 + ri * 20, fill: ci === 4 ? "#22c55e" : "#94a3b8", "font-size": "8" }, svg).textContent = val;
+          cx += colW[ci];
+        });
+      });
+
+      el("text", { x: 50, y: tblY + 100, fill: "#64748b", "font-size": "10", "font-style":"italic" }, svg).textContent = "Each row = one chunk. The embedding column holds the 1536-dim vector.";
+    }
+
+    if (s >= 4) {
+      // Show HNSW graph visual
+      const idxY = detailY + 480;
+      el("text", { x: 40, y: idxY, fill: "#ef4444", "font-size": "12", "font-weight": "600" }, svg).textContent =
+        "CREATE INDEX ix_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)";
+
+      el("text", { x: 40, y: idxY + 20, fill: "#94a3b8", "font-size": "11" }, svg).textContent =
+        "PostgreSQL builds ONE HNSW graph. Each row's embedding = a node. Edges = similar embeddings:";
+
+      // Mini HNSW graph showing the chunks as nodes
+      const graphNodes = [
+        { id: "C0", x: 130, y: idxY + 75,  color: "#ef4444", label: "row 1" },
+        { id: "C1", x: 210, y: idxY + 120, color: "#ef4444", label: "row 2" },
+        { id: "C2", x: 120, y: idxY + 155, color: "#ef4444", label: "row 3" },
+        { id: "F0", x: 450, y: idxY + 60,  color: "#f59e0b", label: "row 4" },
+        { id: "F1", x: 530, y: idxY + 110, color: "#f59e0b", label: "row 5" },
+        { id: "G0", x: 640, y: idxY + 75,  color: "#22c55e", label: "row 6" },
+        { id: "D0", x: 330, y: idxY + 90,  color: "#3b82f6", label: "row 7" },
+        { id: "D1", x: 290, y: idxY + 155, color: "#3b82f6", label: "row 8" },
+      ];
+      const graphEdges = [
+        ["C0","C1"],["C1","C2"],["C0","D0"],["C1","D1"],
+        ["D0","F0"],["D0","D1"],["F0","F1"],["F0","G0"],
+        ["F1","G0"],["D1","C2"],
+      ];
+
+      const gnMap = {};
+      graphNodes.forEach(n => gnMap[n.id] = n);
+
+      // Edges
+      graphEdges.forEach(([a,b]) => {
+        el("line", {
+          x1: gnMap[a].x, y1: gnMap[a].y, x2: gnMap[b].x, y2: gnMap[b].y,
+          stroke: "#475569", "stroke-width": 1.5, opacity: 0.6
+        }, svg);
+      });
+
+      // Nodes
+      graphNodes.forEach(n => {
+        el("circle", { cx: n.x, cy: n.y, r: 16, fill: n.color, stroke: "#f8fafc", "stroke-width": 2 }, svg);
+        el("text", { x: n.x, y: n.y + 4, "text-anchor": "middle", fill: "#f8fafc", "font-size": "8", "font-weight": "700" }, svg).textContent = n.id;
+        el("text", { x: n.x, y: n.y + 28, "text-anchor": "middle", fill: "#64748b", "font-size": "7" }, svg).textContent = n.label;
+      });
+
+      // Arrow from table to graph
+      el("text", { x: 750, y: idxY + 70, fill: "#ef4444", "font-size": "11", "font-weight": "600" }, svg).textContent = "ONE graph";
+      el("text", { x: 750, y: idxY + 88, fill: "#94a3b8", "font-size": "10" }, svg).textContent = "Node = row's embedding";
+      el("text", { x: 750, y: idxY + 104, fill: "#94a3b8", "font-size": "10" }, svg).textContent = "Edge = cosine similarity";
+      el("text", { x: 750, y: idxY + 120, fill: "#94a3b8", "font-size": "10" }, svg).textContent = "Stored in RAM";
+      el("text", { x: 750, y: idxY + 140, fill: "#64748b", "font-size": "10", "font-style": "italic" }, svg).textContent = "m=16, ef_construction=64";
+
+      // Legend
+      const legY = idxY + 170;
+      [["#ef4444","contract_servicii"],["#f59e0b","factura_001"],["#22c55e","factura_002"],["#3b82f6","contract_consultanta"]].forEach(([col,name], i) => {
+        const lx = 80 + i * 210;
+        el("circle", { cx: lx, cy: legY, r: 6, fill: col }, svg);
+        el("text", { x: lx + 12, y: legY + 4, fill: "#94a3b8", "font-size": "10" }, svg).textContent = name;
+      });
+
+      log(`<span class="highlight">Step 5: CREATE INDEX ... USING hnsw (embedding vector_cosine_ops)</span>`);
+      log(`<span class="info">PostgreSQL builds ONE HNSW graph over ALL embedding vectors in the table.</span>`);
+      log(`<span class="info">Each row's embedding becomes a NODE. Edges connect similar embeddings.</span>`);
+      log(`<span class="good">The index is a single unified graph structure, stored in RAM for fast traversal.</span>`);
+    }
+  }
+
+  function reset() {
+    step = 0;
+    logEl.innerHTML = "";
+    drawStep(-1);
+  }
+
+  btnNext.addEventListener("click", () => {
+    if (step > maxSteps) return;
+    const msgs = [
+      `<span class="info">Step 1: Start with PDF documents (contracts, invoices, etc.)</span>`,
+      `<span class="info">Step 2: Split each PDF into text chunks (~500 chars each, with 50 char overlap)</span>`,
+      `<span class="info">Step 3: Feed each chunk through the embedding model -> 1536-dim vector per chunk</span>`,
+      `<span class="info">Step 4: Store chunks + vectors in PostgreSQL (pgvector)</span>`,
+    ];
+    if (step < msgs.length) log(msgs[step]);
+    drawStep(step);
+    step++;
+  });
+
+  btnReset.addEventListener("click", reset);
+  reset();
+})();
+
+
+// ============================================================
+// SECTION 2: Build the HNSW graph node by node
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-graph");
+  const logEl = document.getElementById("graph-log");
+  const btnBuild = document.getElementById("graph-build");
+  const btnReset = document.getElementById("graph-reset");
+  const mSlider = document.getElementById("graph-m");
+  const mVal = document.getElementById("graph-m-val");
+  const speedSel = document.getElementById("graph-speed");
+
+  mSlider.addEventListener("input", () => { mVal.textContent = `m = ${mSlider.value}`; });
+
+  // Simulated chunks with 2D "embedding" positions for visualization
+  // In reality these are 1536-dim, but we project to 2D for display
+  const chunks = [
+    // Contract chunks (red) — clustered together
+    { id: "C0", label: "contract\nchunk 0", shortLabel: "C0", x: 150, y: 140, color: "#ef4444", doc: "contract_servicii.pdf", text: "Rezilierea contractului..." },
+    { id: "C1", label: "contract\nchunk 1", shortLabel: "C1", x: 200, y: 230, color: "#ef4444", doc: "contract_servicii.pdf", text: "Penalitatile pt intarziere..." },
+    { id: "C2", label: "contract\nchunk 2", shortLabel: "C2", x: 120, y: 310, color: "#ef4444", doc: "contract_servicii.pdf", text: "Plata in 14 zile..." },
+    // Factura 001 chunks (orange) — clustered together
+    { id: "F0", label: "factura_001\nchunk 0", shortLabel: "F0", x: 520, y: 120, color: "#f59e0b", doc: "factura_001.pdf", text: "Factura 2024-001 ACME..." },
+    { id: "F1", label: "factura_001\nchunk 1", shortLabel: "F1", x: 600, y: 210, color: "#f59e0b", doc: "factura_001.pdf", text: "Total: 5.200 RON..." },
+    { id: "F2", label: "factura_001\nchunk 2", shortLabel: "F2", x: 480, y: 260, color: "#f59e0b", doc: "factura_001.pdf", text: "Conditii plata 30 zile..." },
+    // Factura 002 chunks (green) — near factura 001
+    { id: "G0", label: "factura_002\nchunk 0", shortLabel: "G0", x: 700, y: 140, color: "#22c55e", doc: "factura_002.pdf", text: "Factura 2024-002 Beta..." },
+    { id: "G1", label: "factura_002\nchunk 1", shortLabel: "G1", x: 750, y: 260, color: "#22c55e", doc: "factura_002.pdf", text: "Total: 3.100 RON..." },
+    // Contract consultanta chunks (blue) — between contracts and invoices
+    { id: "D0", label: "contract_cons\nchunk 0", shortLabel: "D0", x: 350, y: 180, color: "#3b82f6", doc: "contract_consultanta.pdf", text: "Consultanta IT pe 12 luni..." },
+    { id: "D1", label: "contract_cons\nchunk 1", shortLabel: "D1", x: 300, y: 330, color: "#3b82f6", doc: "contract_consultanta.pdf", text: "Penalizare 0.05% pe zi..." },
+    { id: "D2", label: "contract_cons\nchunk 2", shortLabel: "D2", x: 420, y: 370, color: "#3b82f6", doc: "contract_consultanta.pdf", text: "Reziliere cu 60 zile preaviz..." },
+  ];
+
+  function dist(a, b) {
+    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+  }
+
+  let running = false;
+  let edges = [];
+
+  function log(html) {
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function drawState(insertedIds, currentEdges, highlightNode, highlightEdges) {
+    svg.innerHTML = "";
+
+    // Title
+    el("text", { x: 525, y: 25, "text-anchor": "middle", fill: "#64748b", "font-size": "12" },
+      svg).textContent = `HNSW Index: ${insertedIds.length} nodes, ${currentEdges.length} edges — ONE graph for ALL chunks`;
+
+    // Background grid dots to show "vector space"
+    for (let gx = 50; gx < 1000; gx += 50) {
+      for (let gy = 50; gy < 450; gy += 50) {
+        el("circle", { cx: gx, cy: gy + 30, r: 1, fill: "#1e293b" }, svg);
+      }
+    }
+
+    // Draw edges
+    currentEdges.forEach(([aId, bId], ei) => {
+      const a = chunks.find(c => c.id === aId);
+      const b = chunks.find(c => c.id === bId);
+      const isHighlight = highlightEdges && highlightEdges.some(([ha,hb]) => (ha===aId&&hb===bId)||(ha===bId&&hb===aId));
+      el("line", {
+        x1: a.x, y1: a.y + 30, x2: b.x, y2: b.y + 30,
+        stroke: isHighlight ? "#facc15" : "#475569",
+        "stroke-width": isHighlight ? 3 : 1.5,
+        opacity: isHighlight ? 1 : 0.6
+      }, svg);
+    });
+
+    // Draw nodes
+    chunks.forEach(c => {
+      const inserted = insertedIds.includes(c.id);
+      const isHighlight = highlightNode === c.id;
+      if (!inserted && !isHighlight) {
+        // Ghost node (not yet inserted)
+        el("circle", { cx: c.x, cy: c.y + 30, r: 12, fill: "#1e293b", stroke: "#334155", "stroke-width": 1, opacity: 0.3 }, svg);
+        el("text", { x: c.x, y: c.y + 34, "text-anchor": "middle", fill: "#334155", "font-size": "9", opacity: 0.3 }, svg).textContent = c.shortLabel;
+        return;
+      }
+
+      const r = isHighlight ? 22 : 18;
+      const strokeColor = isHighlight ? "#facc15" : "#f8fafc";
+      const strokeW = isHighlight ? 3 : 2;
+
+      el("circle", { cx: c.x, cy: c.y + 30, r, fill: c.color, stroke: strokeColor, "stroke-width": strokeW }, svg);
+      el("text", { x: c.x, y: c.y + 34, "text-anchor": "middle", fill: "#f8fafc", "font-size": "9", "font-weight": "700" }, svg).textContent = c.shortLabel;
+
+      // Doc name below
+      el("text", { x: c.x, y: c.y + 30 + r + 14, "text-anchor": "middle", fill: c.color, "font-size": "8", opacity: 0.7 }, svg).textContent = c.doc.replace(".pdf","");
+    });
+
+    // Stats
+    el("text", { x: 525, y: 470, "text-anchor": "middle", fill: "#94a3b8", "font-size": "12" },
+      svg).textContent = `Nodes = chunks in DB | Edges = "these chunks have similar embeddings" | m = ${mSlider.value}`;
+  }
+
+  async function buildGraph() {
+    if (running) return;
+    running = true;
+    btnBuild.disabled = true;
+    const m = +mSlider.value;
+    const speed = +speedSel.value;
+
+    edges = [];
+    logEl.innerHTML = "";
+    log(`<span class="info">Building HNSW index with m=${m}</span>`);
+    log(`<span class="step">Inserting chunks one by one into the graph...</span>`);
+    log(`<span class="step">---</span>`);
+
+    const inserted = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+
+      // Highlight the chunk being inserted
+      drawState(inserted, edges, chunk.id, []);
+      log(`<span class="highlight">Inserting ${chunk.shortLabel}: "${chunk.text}"</span>`);
+      log(`<span class="step">  from: ${chunk.doc}</span>`);
+      await sleep(speed);
+
+      if (inserted.length === 0) {
+        inserted.push(chunk.id);
+        drawState(inserted, edges, chunk.id, []);
+        log(`<span class="good">  First node in graph. No edges yet.</span>`);
+        await sleep(speed * 0.5);
+        continue;
+      }
+
+      // Find m nearest already-inserted nodes
+      const distances = inserted.map(existingId => {
+        const existing = chunks.find(c => c.id === existingId);
+        return { id: existingId, dist: dist(chunk, existing) };
+      }).sort((a, b) => a.dist - b.dist);
+
+      const nearest = distances.slice(0, m);
+      const newEdges = nearest.map(n => [chunk.id, n.id]);
+
+      log(`<span class="info">  Distances to existing nodes:</span>`);
+      distances.forEach(d => {
+        const isNearest = nearest.find(n => n.id === d.id);
+        const cls = isNearest ? "good" : "step";
+        log(`<span class="${cls}">    ${d.id}: ${d.dist.toFixed(0)} ${isNearest ? "<-- connect (nearest)" : ""}</span>`);
+      });
+
+      inserted.push(chunk.id);
+      edges.push(...newEdges);
+
+      drawState(inserted, edges, chunk.id, newEdges);
+      log(`<span class="good">  Connected ${chunk.shortLabel} to: ${nearest.map(n=>n.id).join(", ")}</span>`);
+      log(`<span class="step">  Graph now: ${inserted.length} nodes, ${edges.length} edges</span>`);
+      log(`<span class="step">---</span>`);
+
+      await sleep(speed);
+    }
+
+    drawState(inserted, edges, null, []);
+    log(`<span class="highlight">Index complete! ONE graph with ${inserted.length} nodes and ${edges.length} edges.</span>`);
+    log(`<span class="info">Notice: chunks from the SAME document cluster together (similar content = close vectors).</span>`);
+    log(`<span class="info">But chunks across documents also connect (e.g., "penalizare" clauses from different contracts).</span>`);
+
+    running = false;
+    btnBuild.disabled = false;
+  }
+
+  btnBuild.addEventListener("click", buildGraph);
+  btnReset.addEventListener("click", () => {
+    if (!running) {
+      edges = [];
+      logEl.innerHTML = "";
+      drawState([], [], null, []);
+    }
+  });
+
+  drawState([], [], null, []);
+})();
+
+
+// ============================================================
+// SECTION 3: Query search animation
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-search");
+  const logEl = document.getElementById("search-log");
+  const btnRun = document.getElementById("search-run");
+  const btnReset = document.getElementById("search-reset");
+
+  // Same chunks but all already in the graph
+  const chunks = [
+    { id: "C0", x: 150, y: 140, color: "#ef4444", text: "Rezilierea contractului...", distToQ: 0.72 },
+    { id: "C1", x: 200, y: 230, color: "#ef4444", text: "Penalitatile pt intarziere 0.1%...", distToQ: 0.15 },
+    { id: "C2", x: 120, y: 310, color: "#ef4444", text: "Plata in 14 zile...", distToQ: 0.58 },
+    { id: "F0", x: 520, y: 120, color: "#f59e0b", text: "Factura 2024-001 ACME...", distToQ: 0.80 },
+    { id: "F1", x: 600, y: 210, color: "#f59e0b", text: "Total: 5.200 RON...", distToQ: 0.75 },
+    { id: "F2", x: 480, y: 260, color: "#f59e0b", text: "Conditii plata 30 zile...", distToQ: 0.55 },
+    { id: "G0", x: 700, y: 140, color: "#22c55e", text: "Factura 2024-002 Beta...", distToQ: 0.82 },
+    { id: "G1", x: 750, y: 260, color: "#22c55e", text: "Total: 3.100 RON...", distToQ: 0.78 },
+    { id: "D0", x: 350, y: 180, color: "#3b82f6", text: "Consultanta IT pe 12 luni...", distToQ: 0.60 },
+    { id: "D1", x: 300, y: 330, color: "#3b82f6", text: "Penalizare 0.05% pe zi...", distToQ: 0.18 },
+    { id: "D2", x: 420, y: 370, color: "#3b82f6", text: "Reziliere cu 60 zile preaviz...", distToQ: 0.45 },
+  ];
+
+  // Pre-built edges (m=2 style)
+  const edges = [
+    ["C0","C1"],["C0","D0"],["C1","C2"],["C1","D1"],
+    ["F0","F1"],["F0","G0"],["F1","F2"],["F2","D0"],
+    ["G0","G1"],["G1","F1"],
+    ["D0","D1"],["D0","C0"],["D1","D2"],["D2","C2"],
+  ];
+
+  const queryNode = { x: 250, y: 390, text: "Care sunt penalitatile de intarziere?" };
+
+  const chunkMap = {};
+  chunks.forEach(c => chunkMap[c.id] = c);
+
+  function getNeighbors(nodeId) {
+    return edges
+      .filter(([a,b]) => a === nodeId || b === nodeId)
+      .map(([a,b]) => a === nodeId ? b : a);
+  }
+
+  let running = false;
+
+  function log(html) {
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function drawBase(visited, candidates, results) {
+    svg.innerHTML = "";
+    visited = visited || new Set();
+    candidates = candidates || [];
+    results = results || [];
+
+    const resultIds = results.map(r => r.id);
+    const candidateIds = candidates.map(c => c.id);
+
+    // Grid
+    for (let gx = 50; gx < 1000; gx += 50) {
+      for (let gy = 50; gy < 450; gy += 50) {
+        el("circle", { cx: gx, cy: gy + 30, r: 1, fill: "#1e293b" }, svg);
+      }
+    }
+
+    // Title
+    el("text", { x: 525, y: 25, "text-anchor": "middle", fill: "#64748b", "font-size": "12" },
+      svg).textContent = "HNSW graph traversal: embedding <=> query_embedding (cosine distance)";
+
+    // Edges
+    edges.forEach(([aId, bId]) => {
+      el("line", {
+        x1: chunkMap[aId].x, y1: chunkMap[aId].y + 30,
+        x2: chunkMap[bId].x, y2: chunkMap[bId].y + 30,
+        stroke: "#475569", "stroke-width": 1.5, opacity: 0.4
+      }, svg);
+    });
+
+    // Nodes
+    chunks.forEach(c => {
+      const isResult = resultIds.includes(c.id);
+      const isCandidate = candidateIds.includes(c.id);
+      const isVisited = visited.has(c.id);
+
+      let fill = c.color, stroke = "#f8fafc", sw = 2, r = 18;
+      if (isResult) { fill = "#fbbf24"; stroke = "#f43f5e"; sw = 3; r = 22; }
+      else if (isCandidate) { fill = "#38bdf8"; stroke = "#f8fafc"; sw = 2; r = 18; }
+      else if (isVisited) { fill = "#c084fc"; sw = 1; r = 16; }
+
+      el("circle", { cx: c.x, cy: c.y + 30, r, fill, stroke, "stroke-width": sw, id: `search-${c.id}` }, svg);
+      el("text", { x: c.x, y: c.y + 34, "text-anchor": "middle", fill: "#f8fafc", "font-size": "9", "font-weight": "700" }, svg).textContent = c.id;
+      el("text", { x: c.x, y: c.y + 30 + r + 12, "text-anchor": "middle", fill: "#475569", "font-size": "8" }, svg).textContent = `d=${c.distToQ.toFixed(2)}`;
+    });
+
+    // Query node
+    el("circle", { cx: queryNode.x, cy: queryNode.y + 30, r: 18, fill: "#f43f5e", stroke: "#f8fafc", "stroke-width": 2 }, svg);
+    el("text", { x: queryNode.x, y: queryNode.y + 34, "text-anchor": "middle", fill: "#f8fafc", "font-size": "10", "font-weight": "800" }, svg).textContent = "Q";
+    el("text", { x: queryNode.x, y: queryNode.y + 55, "text-anchor": "middle", fill: "#f43f5e", "font-size": "9" }, svg).textContent = queryNode.text;
+
+    // Stats
+    el("text", { x: 525, y: 470, "text-anchor": "middle", fill: "#94a3b8", "font-size": "11" },
+      svg).textContent = "Cosine distance (<=>) computed at each visited node. Lower = more similar.";
+  }
+
+  async function runSearch() {
+    if (running) return;
+    running = true;
+    btnRun.disabled = true;
+    logEl.innerHTML = "";
+
+    const ef = 4;
+    const TOP_K = 3;
+
+    log(`<span class="info">Query: "${queryNode.text}"</span>`);
+    log(`<span class="info">1. Embed query with SAME model -> query vector</span>`);
+    log(`<span class="info">2. Search HNSW graph (ef_search=${ef}, top_k=${TOP_K})</span>`);
+    log(`<span class="step">---</span>`);
+
+    // Start at F0 (random entry point)
+    const candidates = [];
+    const visited = new Set();
+    const queue = ["F0"];
+    visited.add("F0");
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      const n = chunkMap[nodeId];
+
+      drawBase(visited, candidates, []);
+      const circle = document.getElementById(`search-${nodeId}`);
+      if (circle) { circle.setAttribute("fill", "#f97316"); circle.setAttribute("r", "22"); }
+
+      log(`<span class="step">Visit ${nodeId}: "${n.text}"</span>`);
+      log(`<span class="step">  cosine_distance(query_embedding, ${nodeId}_embedding) = ${n.distToQ.toFixed(2)}</span>`);
+      await sleep(600);
+
+      let accepted = false;
+      if (candidates.length < ef) {
+        candidates.push({ id: nodeId, dist: n.distToQ });
+        candidates.sort((a,b) => a.dist - b.dist);
+        log(`<span class="good">  + Accepted [${candidates.map(c=>c.id+":"+c.dist.toFixed(2)).join(", ")}]</span>`);
+        accepted = true;
+      } else if (n.distToQ < candidates[candidates.length-1].dist) {
+        const ev = candidates.pop();
+        candidates.push({ id: nodeId, dist: n.distToQ });
+        candidates.sort((a,b) => a.dist - b.dist);
+        log(`<span class="good">  + Replaces ${ev.id} [${candidates.map(c=>c.id+":"+c.dist.toFixed(2)).join(", ")}]</span>`);
+        accepted = true;
+      } else {
+        log(`<span class="bad">  - Rejected</span>`);
+      }
+
+      if (accepted) {
+        const neighbors = getNeighbors(nodeId).filter(id => !visited.has(id));
+        for (const nbrId of neighbors) {
+          visited.add(nbrId);
+          const nbr = chunkMap[nbrId];
+          if (candidates.length < ef || nbr.distToQ < candidates[candidates.length-1].dist) {
+            queue.push(nbrId);
+          }
+        }
+      }
+
+      drawBase(visited, candidates, []);
+      await sleep(300);
+    }
+
+    const results = candidates.slice(0, TOP_K);
+    drawBase(visited, [], results);
+
+    log(`<span class="step">---</span>`);
+    log(`<span class="highlight">Top ${TOP_K} results (lowest cosine distance = most similar):</span>`);
+    results.forEach((r, i) => {
+      const c = chunkMap[r.id];
+      log(`<span class="good">  ${i+1}. ${r.id} (d=${r.dist.toFixed(2)}): "${c.text}"</span>`);
+    });
+    log(`<span class="step">---</span>`);
+    log(`<span class="info">3. These ${TOP_K} chunks are sent to the LLM as context for the answer.</span>`);
+
+    running = false;
+    btnRun.disabled = false;
+  }
+
+  btnRun.addEventListener("click", runSearch);
+  btnReset.addEventListener("click", () => { if (!running) { logEl.innerHTML = ""; drawBase(); }});
+  drawBase();
+})();
+
+
+// ============================================================
+// SECTION 4: HNSW vs IVFFlat comparison (static)
+// ============================================================
+(function() {
+  // HNSW side
+  const svgH = document.getElementById("svg-hnsw-cmp");
+  const points = [
+    {x:80,y:60},{x:120,y:100},{x:60,y:140},{x:160,y:70},{x:200,y:130},
+    {x:300,y:80},{x:340,y:140},{x:280,y:180},{x:360,y:60},
+    {x:140,y:220},{x:220,y:250},{x:320,y:240},{x:400,y:200},
+  ];
+
+  // Connect each to 2 nearest
+  const hEdges = [];
+  points.forEach((p, i) => {
+    const dists = points.map((q, j) => ({ j, d: Math.sqrt((p.x-q.x)**2+(p.y-q.y)**2) }))
+      .filter(d => d.j !== i).sort((a,b) => a.d - b.d);
+    for (let k = 0; k < 2; k++) {
+      const edge = [Math.min(i, dists[k].j), Math.max(i, dists[k].j)];
+      if (!hEdges.find(e => e[0]===edge[0] && e[1]===edge[1])) hEdges.push(edge);
+    }
+  });
+
+  hEdges.forEach(([a,b]) => {
+    el("line", { x1:points[a].x, y1:points[a].y, x2:points[b].x, y2:points[b].y,
+      stroke:"#38bdf8", "stroke-width":1.5, opacity:0.5 }, svgH);
+  });
+  points.forEach(p => {
+    el("circle", { cx:p.x, cy:p.y, r:8, fill:"#38bdf8", stroke:"#f8fafc", "stroke-width":1.5 }, svgH);
+  });
+  el("text", { x:240, y:285, "text-anchor":"middle", fill:"#38bdf8", "font-size":"11" }, svgH).textContent = "One connected graph";
+
+  // IVFFlat side
+  const svgI = document.getElementById("svg-ivf-cmp");
+  const clusters = [
+    { cx: 100, cy: 100, r: 70, color: "#a78bfa", points: [{x:80,y:70},{x:120,y:90},{x:90,y:120},{x:130,y:110},{x:70,y:100}] },
+    { cx: 300, cy: 90,  r: 65, color: "#c084fc", points: [{x:280,y:70},{x:320,y:80},{x:290,y:110},{x:340,y:100},{x:310,y:60}] },
+    { cx: 200, cy: 220, r: 70, color: "#8b5cf6", points: [{x:180,y:200},{x:220,y:210},{x:190,y:240},{x:230,y:250},{x:210,y:230}] },
+  ];
+
+  clusters.forEach(cl => {
+    el("circle", { cx:cl.cx, cy:cl.cy, r:cl.r, fill:"none", stroke:cl.color, "stroke-width":2, "stroke-dasharray":"5,5", opacity:0.5 }, svgI);
+    // Centroid
+    el("circle", { cx:cl.cx, cy:cl.cy, r:5, fill:cl.color, opacity:0.6 }, svgI);
+    el("text", { x:cl.cx, y:cl.cy-10, "text-anchor":"middle", fill:cl.color, "font-size":"8", opacity:0.7 }, svgI).textContent = "centroid";
+    // Points
+    cl.points.forEach(p => {
+      el("circle", { cx:p.x, cy:p.y, r:6, fill:cl.color, stroke:"#f8fafc", "stroke-width":1 }, svgI);
+    });
+  });
+  el("text", { x:220, y:285, "text-anchor":"middle", fill:"#a78bfa", "font-size":"11" }, svgI).textContent = "Separate clusters, no edges";
+})();
+</script>
+</body>
+</html>

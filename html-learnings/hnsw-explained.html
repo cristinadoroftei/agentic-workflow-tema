@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HNSW Explained</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+  h1 { text-align: center; font-size: 2rem; margin: 20px 0 8px; color: #f8fafc; }
+  .subtitle { text-align: center; color: #94a3b8; margin-bottom: 30px; font-size: 1rem; }
+
+  /* --- Sections --- */
+  .section { background: #1e293b; border-radius: 12px; padding: 28px; margin-bottom: 28px; border: 1px solid #334155; }
+  .section h2 { font-size: 1.3rem; margin-bottom: 6px; color: #38bdf8; }
+  .section .desc { color: #94a3b8; margin-bottom: 18px; font-size: 0.95rem; }
+
+  /* --- SVG canvases --- */
+  svg { display: block; margin: 0 auto; }
+  svg text { font-family: 'Segoe UI', system-ui, sans-serif; }
+
+  /* --- Controls --- */
+  .controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .control-group { display: flex; flex-direction: column; gap: 2px; }
+  .control-group label { font-size: 0.8rem; color: #94a3b8; }
+  .control-group .value { font-size: 0.85rem; color: #38bdf8; font-weight: 600; }
+  button {
+    padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer;
+    font-size: 0.9rem; font-weight: 600; transition: all 0.2s;
+  }
+  .btn-primary { background: #2563eb; color: white; }
+  .btn-primary:hover { background: #3b82f6; }
+  .btn-secondary { background: #334155; color: #e2e8f0; }
+  .btn-secondary:hover { background: #475569; }
+  .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* --- Legend --- */
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; font-size: 0.85rem; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 50%; }
+
+  /* --- Log panel --- */
+  .log-panel {
+    background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+    padding: 14px; margin-top: 14px; max-height: 220px; overflow-y: auto;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.82rem;
+    line-height: 1.8;
+  }
+  .log-panel .step { color: #64748b; }
+  .log-panel .step.active { color: #f8fafc; }
+  .log-panel .highlight { color: #facc15; font-weight: 600; }
+  .log-panel .good { color: #4ade80; }
+  .log-panel .bad { color: #f87171; }
+  .log-panel .info { color: #38bdf8; }
+
+  /* --- Parameter explainer --- */
+  .param-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .param-card {
+    background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 18px;
+  }
+  .param-card h3 { font-size: 1rem; margin-bottom: 4px; }
+  .param-card .mono { font-family: 'SF Mono', monospace; color: #c084fc; }
+  .param-card p { font-size: 0.9rem; color: #94a3b8; }
+
+  /* --- Tabs --- */
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; }
+  .tab {
+    padding: 8px 18px; border-radius: 6px 6px 0 0; cursor: pointer;
+    background: #0f172a; color: #94a3b8; font-size: 0.9rem; font-weight: 600;
+    border: 1px solid #334155; border-bottom: none; transition: all 0.2s;
+  }
+  .tab.active { background: #1e293b; color: #38bdf8; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .speed-control { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .speed-control label { font-size: 0.8rem; color: #94a3b8; }
+  select {
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 4px; padding: 4px 8px; font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>HNSW - Hierarchical Navigable Small World</h1>
+  <p class="subtitle">Interactive visualization of how vector search indexes work</p>
+
+  <!-- === SECTION 1: Parameter Overview === -->
+  <div class="section">
+    <h2>The Three Parameters</h2>
+    <div class="param-cards">
+      <div class="param-card">
+        <h3><span class="mono">m</span> &mdash; Max Connections</h3>
+        <p>How many neighbor edges each node gets per layer. More connections = better recall but more memory. Think of it as "how many friends each node has."</p>
+      </div>
+      <div class="param-card">
+        <h3><span class="mono">ef_construction</span> &mdash; Build-time Beam Width</h3>
+        <p>Size of the candidate list when inserting a new node. Controls how carefully we pick the m best neighbors. Paid once at index build time.</p>
+      </div>
+      <div class="param-card">
+        <h3><span class="mono">ef_search</span> &mdash; Query-time Beam Width</h3>
+        <p>Size of the candidate list when searching. Controls how thoroughly we explore the graph per query. Tunable at runtime, no rebuild needed.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- === SECTION 2: STATIC STRUCTURE (m) === -->
+  <div class="section">
+    <h2>1. How <code>m</code> shapes the graph</h2>
+    <p class="desc">Each node connects to at most <strong>m</strong> neighbors per layer. Drag the slider to see how the graph density changes.</p>
+    <div class="controls">
+      <div class="control-group">
+        <label>m (max connections)</label>
+        <input type="range" id="m-slider" min="2" max="6" value="3" step="1">
+        <span class="value" id="m-value">m = 3</span>
+      </div>
+    </div>
+    <svg id="svg-m" width="900" height="440"></svg>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div> Layer 2 (sparse, long jumps)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Layer 1 (medium)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Layer 0 (dense, all nodes)</div>
+    </div>
+  </div>
+
+  <!-- === SECTION 3: ef_construction demo === -->
+  <div class="section">
+    <h2>2. <code>ef_construction</code> &mdash; Building the Index</h2>
+    <p class="desc">We insert a <strong style="color:#facc15">new vector (X)</strong> into Layer 0. The algorithm searches for X's nearest neighbors, keeping a candidate list of size <code>ef_construction</code>. Then it connects X to the best <code>m</code> candidates.</p>
+    <div class="controls">
+      <div class="control-group">
+        <label>ef_construction</label>
+        <input type="range" id="efc-slider" min="2" max="8" value="3" step="1">
+        <span class="value" id="efc-value">ef_construction = 3</span>
+      </div>
+      <div class="control-group">
+        <label>m</label>
+        <span class="value">m = 2 (connect to best 2)</span>
+      </div>
+      <button class="btn-primary" id="efc-run">Run Insertion</button>
+      <button class="btn-secondary" id="efc-reset">Reset</button>
+      <div class="speed-control">
+        <label>Speed:</label>
+        <select id="efc-speed">
+          <option value="1200">Slow</option>
+          <option value="700" selected>Normal</option>
+          <option value="350">Fast</option>
+        </select>
+      </div>
+    </div>
+    <svg id="svg-efc" width="900" height="340"></svg>
+    <div class="log-panel" id="efc-log"></div>
+    <div class="legend" style="margin-top:14px">
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Existing node</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#facc15"></div> New vector X</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> Visiting</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> In candidate list</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#c084fc"></div> Evicted from candidates</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ef4444; border:2px solid #fbbf24"></div> Final m connections</div>
+    </div>
+  </div>
+
+  <!-- === SECTION 4: ef_search demo === -->
+  <div class="section">
+    <h2>3. <code>ef_search</code> &mdash; Querying the Index</h2>
+    <p class="desc">A <strong style="color:#f43f5e">query Q</strong> enters. We search top-down through the layers, keeping a candidate list of size <code>ef_search</code>. A larger ef_search explores more nodes = higher recall but slower.</p>
+    <div class="controls">
+      <div class="control-group">
+        <label>ef_search</label>
+        <input type="range" id="efs-slider" min="2" max="8" value="3" step="1">
+        <span class="value" id="efs-value">ef_search = 3</span>
+      </div>
+      <div class="control-group">
+        <label>top_k</label>
+        <span class="value">Return top 2 results</span>
+      </div>
+      <button class="btn-primary" id="efs-run">Run Search</button>
+      <button class="btn-secondary" id="efs-reset">Reset</button>
+      <div class="speed-control">
+        <label>Speed:</label>
+        <select id="efs-speed">
+          <option value="1200">Slow</option>
+          <option value="700" selected>Normal</option>
+          <option value="350">Fast</option>
+        </select>
+      </div>
+    </div>
+    <svg id="svg-efs" width="900" height="460"></svg>
+    <div class="log-panel" id="efs-log"></div>
+    <div class="legend" style="margin-top:14px">
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Graph node</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f43f5e"></div> Query Q</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> Currently visiting</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> In candidate list</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#c084fc"></div> Evicted (list full)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fbbf24; border:2px solid #f43f5e"></div> Final results (top_k)</div>
+    </div>
+  </div>
+
+  <!-- === SECTION 5: Comparison === -->
+  <div class="section">
+    <h2>4. Side-by-side: Low vs High ef_search</h2>
+    <p class="desc">Same graph, same query. See how a larger candidate list finds better results at the cost of more node visits.</p>
+    <div class="controls">
+      <button class="btn-primary" id="cmp-run">Run Both</button>
+      <button class="btn-secondary" id="cmp-reset">Reset</button>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div>
+        <h3 style="text-align:center; color:#f87171; margin-bottom:8px;">ef_search = 2 (fast, might miss)</h3>
+        <svg id="svg-cmp-low" width="440" height="320"></svg>
+        <div class="log-panel" id="cmp-low-log" style="max-height:140px;"></div>
+      </div>
+      <div>
+        <h3 style="text-align:center; color:#4ade80; margin-bottom:8px;">ef_search = 6 (thorough)</h3>
+        <svg id="svg-cmp-high" width="440" height="320"></svg>
+        <div class="log-panel" id="cmp-high-log" style="max-height:140px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Utility helpers
+// ============================================================
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function dist(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// SECTION 1: m slider — static graph
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-m");
+  const slider = document.getElementById("m-slider");
+  const valueEl = document.getElementById("m-value");
+
+  // Predefined node positions for 3 layers — scattered in 2D so cross-edges are visible
+  const layers = [
+    { y: 60,  color: "#64748b", label: "Layer 2", nodes: [
+      {id:"L2A",x:180,y:45},{id:"L2B",x:450,y:70},{id:"L2C",x:720,y:50}
+    ]},
+    { y: 180, color: "#3b82f6", label: "Layer 1", nodes: [
+      {id:"L1A",x:110,y:160},{id:"L1B",x:270,y:195},{id:"L1C",x:430,y:155},
+      {id:"L1D",x:590,y:190},{id:"L1E",x:750,y:165}
+    ]},
+    { y: 320, color: "#22c55e", label: "Layer 0", nodes: [
+      {id:"L0A",x:70,y:290},{id:"L0B",x:160,y:340},{id:"L0C",x:250,y:295},
+      {id:"L0D",x:340,y:350},{id:"L0E",x:420,y:300},{id:"L0F",x:510,y:355},
+      {id:"L0G",x:600,y:295},{id:"L0H",x:690,y:345},{id:"L0I",x:770,y:300},
+      {id:"L0J",x:850,y:340}
+    ]}
+  ];
+
+  // Possible edges per layer — ordered by distance/quality
+  const edgeSets = {
+    2: [ // Layer 2 edges by m
+      [["L2A","L2B"],["L2B","L2C"]], // m=2
+      [["L2A","L2B"],["L2B","L2C"],["L2A","L2C"]], // m=3
+      [["L2A","L2B"],["L2B","L2C"],["L2A","L2C"]], // m=4
+      [["L2A","L2B"],["L2B","L2C"],["L2A","L2C"]], // m=5
+      [["L2A","L2B"],["L2B","L2C"],["L2A","L2C"]], // m=6
+    ],
+    1: [
+      [["L1A","L1B"],["L1B","L1C"],["L1C","L1D"],["L1D","L1E"]], // m=2
+      [["L1A","L1B"],["L1B","L1C"],["L1C","L1D"],["L1D","L1E"],["L1A","L1C"],["L1C","L1E"]], // m=3
+      [["L1A","L1B"],["L1B","L1C"],["L1C","L1D"],["L1D","L1E"],["L1A","L1C"],["L1C","L1E"],["L1B","L1D"],["L1A","L1D"]], // m=4
+      [["L1A","L1B"],["L1B","L1C"],["L1C","L1D"],["L1D","L1E"],["L1A","L1C"],["L1C","L1E"],["L1B","L1D"],["L1A","L1D"],["L1B","L1E"],["L1A","L1E"]], // m=5
+      [["L1A","L1B"],["L1B","L1C"],["L1C","L1D"],["L1D","L1E"],["L1A","L1C"],["L1C","L1E"],["L1B","L1D"],["L1A","L1D"],["L1B","L1E"],["L1A","L1E"]], // m=6
+    ],
+    0: [
+      [["L0A","L0B"],["L0B","L0C"],["L0C","L0D"],["L0D","L0E"],["L0E","L0F"],["L0F","L0G"],["L0G","L0H"],["L0H","L0I"],["L0I","L0J"]], // m=2
+      [["L0A","L0B"],["L0B","L0C"],["L0C","L0D"],["L0D","L0E"],["L0E","L0F"],["L0F","L0G"],["L0G","L0H"],["L0H","L0I"],["L0I","L0J"],["L0A","L0C"],["L0C","L0E"],["L0E","L0G"],["L0G","L0I"],["L0B","L0D"],["L0F","L0H"],["L0H","L0J"]], // m=3
+      [["L0A","L0B"],["L0B","L0C"],["L0C","L0D"],["L0D","L0E"],["L0E","L0F"],["L0F","L0G"],["L0G","L0H"],["L0H","L0I"],["L0I","L0J"],["L0A","L0C"],["L0C","L0E"],["L0E","L0G"],["L0G","L0I"],["L0B","L0D"],["L0F","L0H"],["L0H","L0J"],["L0A","L0D"],["L0D","L0G"],["L0B","L0E"],["L0E","L0H"],["L0C","L0F"],["L0F","L0I"],["L0D","L0F"]], // m=4
+      [["L0A","L0B"],["L0B","L0C"],["L0C","L0D"],["L0D","L0E"],["L0E","L0F"],["L0F","L0G"],["L0G","L0H"],["L0H","L0I"],["L0I","L0J"],["L0A","L0C"],["L0C","L0E"],["L0E","L0G"],["L0G","L0I"],["L0B","L0D"],["L0F","L0H"],["L0H","L0J"],["L0A","L0D"],["L0D","L0G"],["L0B","L0E"],["L0E","L0H"],["L0C","L0F"],["L0F","L0I"],["L0D","L0F"],["L0A","L0E"],["L0C","L0G"],["L0E","L0I"],["L0B","L0F"],["L0D","L0H"],["L0F","L0J"]], // m=5
+      [["L0A","L0B"],["L0B","L0C"],["L0C","L0D"],["L0D","L0E"],["L0E","L0F"],["L0F","L0G"],["L0G","L0H"],["L0H","L0I"],["L0I","L0J"],["L0A","L0C"],["L0C","L0E"],["L0E","L0G"],["L0G","L0I"],["L0B","L0D"],["L0F","L0H"],["L0H","L0J"],["L0A","L0D"],["L0D","L0G"],["L0B","L0E"],["L0E","L0H"],["L0C","L0F"],["L0F","L0I"],["L0D","L0F"],["L0A","L0E"],["L0C","L0G"],["L0E","L0I"],["L0B","L0F"],["L0D","L0H"],["L0F","L0J"],["L0A","L0F"],["L0B","L0G"],["L0C","L0H"],["L0D","L0I"],["L0E","L0J"]], // m=6
+    ]
+  };
+
+  // Vertical connections between layers
+  const verticals = [
+    ["L2A","L1A"],["L2B","L1C"],["L2C","L1E"],
+    ["L1A","L0A"],["L1B","L0C"],["L1C","L0E"],["L1D","L0G"],["L1E","L0I"]
+  ];
+
+  const nodeMap = {};
+  layers.forEach(l => l.nodes.forEach(n => nodeMap[n.id] = n));
+
+  function draw(m) {
+    svg.innerHTML = "";
+    const idx = m - 2;
+
+    // Dashed vertical connections
+    for (const [a, b] of verticals) {
+      el("line", {
+        x1: nodeMap[a].x, y1: nodeMap[a].y, x2: nodeMap[b].x, y2: nodeMap[b].y,
+        stroke: "#334155", "stroke-width": 1, "stroke-dasharray": "4,4"
+      }, svg);
+    }
+
+    // Layer labels
+    layers.forEach(l => {
+      el("text", { x: 12, y: l.y + 5, fill: l.color, "font-size": "13", "font-weight": "600" }, svg).textContent = l.label;
+    });
+
+    // Edges per layer
+    for (const layer of [2, 1, 0]) {
+      const edges = edgeSets[layer][idx] || edgeSets[layer][edgeSets[layer].length - 1];
+      const color = layers[2 - layer].color;
+      for (const [a, b] of edges) {
+        el("line", {
+          x1: nodeMap[a].x, y1: nodeMap[a].y, x2: nodeMap[b].x, y2: nodeMap[b].y,
+          stroke: color, "stroke-width": 2, opacity: 0.7
+        }, svg);
+      }
+    }
+
+    // Nodes
+    layers.forEach(l => {
+      l.nodes.forEach(n => {
+        el("circle", { cx: n.x, cy: n.y, r: 12, fill: l.color, stroke: "#f8fafc", "stroke-width": 2 }, svg);
+        el("text", {
+          x: n.x, y: n.y + 4, "text-anchor": "middle", fill: "#f8fafc",
+          "font-size": "10", "font-weight": "600"
+        }, svg).textContent = n.id.replace(/L\d/, "");
+      });
+    });
+
+    // Info text
+    const totalEdges = [2,1,0].reduce((s, layer) => {
+      const edges = edgeSets[layer][idx] || edgeSets[layer][edgeSets[layer].length - 1];
+      return s + edges.length;
+    }, 0);
+    el("text", {
+      x: 450, y: 420, "text-anchor": "middle", fill: "#94a3b8", "font-size": "14"
+    }, svg).textContent = `m = ${m}  |  Total edges: ${totalEdges}  |  More edges = better recall, more memory`;
+  }
+
+  slider.addEventListener("input", () => {
+    const m = +slider.value;
+    valueEl.textContent = `m = ${m}`;
+    draw(m);
+  });
+
+  draw(3);
+})();
+
+
+// ============================================================
+// SECTION 2: ef_construction animation
+// ============================================================
+// Key insight: the algorithm only explores NEIGHBORS of nodes in the
+// candidate list. If a node is too far and gets rejected, its neighbors
+// are never visited. A small ef_construction can miss entire graph branches.
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-efc");
+  const logEl = document.getElementById("efc-log");
+  const slider = document.getElementById("efc-slider");
+  const valueEl = document.getElementById("efc-value");
+  const btnRun = document.getElementById("efc-run");
+  const btnReset = document.getElementById("efc-reset");
+  const speedSel = document.getElementById("efc-speed");
+
+  const M = 2; // connect to best 2
+
+  // Two-branch graph: top branch has decent nodes, bottom branch has the BEST nodes.
+  // With small ef, the search goes through the top branch and never reaches the bottom.
+  const nodes = [
+    // Entry point (far from X)
+    { id: "A", x: 80,  y: 160, distToX: 0.80 },
+    // Top branch — easily found, medium quality
+    { id: "B", x: 230, y: 80,  distToX: 0.45 },
+    { id: "C", x: 400, y: 60,  distToX: 0.30 },
+    { id: "D", x: 570, y: 80,  distToX: 0.28 },
+    // Bottom branch — harder to reach, but contains the BEST neighbors
+    { id: "G", x: 200, y: 250, distToX: 0.75 },
+    { id: "H", x: 370, y: 260, distToX: 0.60 },
+    { id: "I", x: 560, y: 245, distToX: 0.10 },
+    { id: "J", x: 720, y: 255, distToX: 0.08 },
+  ];
+  const newNode = { id: "X", x: 680, y: 155 };
+
+  // Graph edges — two distinct branches from A
+  const edges = [
+    ["A","B"], ["B","C"], ["C","D"],  // top branch
+    ["A","G"], ["G","H"], ["H","I"], ["I","J"],  // bottom branch
+    ["B","D"],  // shortcut in top branch
+  ];
+
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+
+  function getNeighbors(nodeId) {
+    const nbrs = [];
+    for (const [a, b] of edges) {
+      if (a === nodeId) nbrs.push(b);
+      if (b === nodeId) nbrs.push(a);
+    }
+    return nbrs;
+  }
+
+  let running = false;
+
+  slider.addEventListener("input", () => {
+    valueEl.textContent = `ef_construction = ${slider.value}`;
+  });
+
+  function drawBase() {
+    svg.innerHTML = "";
+    logEl.innerHTML = "";
+
+    // Branch labels
+    el("text", { x: 330, y: 30, "text-anchor": "middle", fill: "#475569", "font-size": "12", "font-style": "italic" }, svg).textContent = "Top branch (decent nodes)";
+    el("text", { x: 430, y: 300, "text-anchor": "middle", fill: "#475569", "font-size": "12", "font-style": "italic" }, svg).textContent = "Bottom branch (BEST nodes — but will the search reach here?)";
+
+    // Edges
+    for (const [a, b] of edges) {
+      el("line", {
+        x1: nodeMap[a].x, y1: nodeMap[a].y, x2: nodeMap[b].x, y2: nodeMap[b].y,
+        stroke: "#334155", "stroke-width": 2, id: `efc-edge-${a}-${b}`
+      }, svg);
+    }
+
+    // Nodes
+    nodes.forEach(n => {
+      el("circle", {
+        cx: n.x, cy: n.y, r: 16, fill: "#22c55e", stroke: "#f8fafc", "stroke-width": 2,
+        id: `efc-node-${n.id}`
+      }, svg);
+      el("text", {
+        x: n.x, y: n.y + 4, "text-anchor": "middle", fill: "#f8fafc",
+        "font-size": "11", "font-weight": "700"
+      }, svg).textContent = n.id;
+      el("text", {
+        x: n.x, y: n.y - 22, "text-anchor": "middle", fill: "#64748b",
+        "font-size": "10", id: `efc-dist-${n.id}`
+      }, svg).textContent = `d=${n.distToX.toFixed(2)}`;
+    });
+
+    // New node X
+    el("circle", {
+      cx: newNode.x, cy: newNode.y, r: 18, fill: "#facc15", stroke: "#f8fafc", "stroke-width": 2,
+      id: "efc-node-X"
+    }, svg);
+    el("text", {
+      x: newNode.x, y: newNode.y + 5, "text-anchor": "middle", fill: "#0f172a",
+      "font-size": "13", "font-weight": "800"
+    }, svg).textContent = "X";
+  }
+
+  function log(html) {
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  async function runInsertion() {
+    if (running) return;
+    running = true;
+    btnRun.disabled = true;
+    const ef = +slider.value;
+    const speed = +speedSel.value;
+
+    drawBase();
+    log(`<span class="info">Inserting X with ef_construction=${ef}, m=${M}</span>`);
+    log(`<span class="step">Candidate list capacity: ${ef} slots</span>`);
+    log(`<span class="step">Rule: only explore neighbors of nodes we VISIT. A node is visited only if it enters the candidate list.</span>`);
+    log(`<span class="step">---</span>`);
+
+    // Proper HNSW greedy BFS:
+    // - Start at entry point A
+    // - Maintain a queue of nodes to visit (only nodes that made it into candidates)
+    // - For each visited node, check its neighbors
+    // - A neighbor is added to queue ONLY if it improves candidates or candidates aren't full
+    const candidates = []; // {id, dist} sorted by distance ascending
+    const visited = new Set();
+    const queue = ["A"]; // start at entry point
+    visited.add("A");
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      const n = nodeMap[nodeId];
+
+      // Highlight visiting
+      const circle = document.getElementById(`efc-node-${nodeId}`);
+      circle.setAttribute("fill", "#f97316");
+      circle.setAttribute("r", "20");
+      log(`<span class="step active">Visiting <strong>${nodeId}</strong> (d=${n.distToX.toFixed(2)})</span>`);
+      await sleep(speed);
+
+      // Try to add to candidates
+      let added = false;
+      if (candidates.length < ef) {
+        candidates.push({ id: nodeId, dist: n.distToX });
+        candidates.sort((a, b) => a.dist - b.dist);
+        circle.setAttribute("fill", "#38bdf8");
+        circle.setAttribute("r", "16");
+        log(`<span class="good">  + Added to candidates [${candidates.map(c => c.id+"("+c.dist.toFixed(2)+")").join(", ")}]</span>`);
+        added = true;
+      } else if (n.distToX < candidates[candidates.length - 1].dist) {
+        const evicted = candidates.pop();
+        const evCircle = document.getElementById(`efc-node-${evicted.id}`);
+        evCircle.setAttribute("fill", "#c084fc");
+        candidates.push({ id: nodeId, dist: n.distToX });
+        candidates.sort((a, b) => a.dist - b.dist);
+        circle.setAttribute("fill", "#38bdf8");
+        circle.setAttribute("r", "16");
+        log(`<span class="good">  + Replaces ${evicted.id}(${evicted.dist.toFixed(2)}) [${candidates.map(c => c.id+"("+c.dist.toFixed(2)+")").join(", ")}]</span>`);
+        added = true;
+      } else {
+        circle.setAttribute("fill", "#c084fc");
+        circle.setAttribute("r", "16");
+        log(`<span class="bad">  - Too far (${n.distToX.toFixed(2)}) vs worst candidate (${candidates[candidates.length-1].dist.toFixed(2)}). REJECTED — neighbors NOT explored!</span>`);
+      }
+
+      // Only explore neighbors if this node was accepted
+      if (added) {
+        const neighbors = getNeighbors(nodeId).filter(id => !visited.has(id));
+        for (const nbrId of neighbors) {
+          visited.add(nbrId);
+          const nbr = nodeMap[nbrId];
+          // Add to queue if it could improve candidates
+          if (candidates.length < ef || nbr.distToX < candidates[candidates.length - 1].dist) {
+            queue.push(nbrId);
+            log(`<span class="step">    queue += ${nbrId} (d=${nbr.distToX.toFixed(2)})</span>`);
+          } else {
+            log(`<span class="bad">    skip neighbor ${nbrId} (d=${nbr.distToX.toFixed(2)}) — can't beat worst candidate</span>`);
+          }
+        }
+      }
+      await sleep(speed * 0.4);
+    }
+
+    // Mark unvisited nodes in gray
+    nodes.forEach(n => {
+      if (!visited.has(n.id)) {
+        const circle = document.getElementById(`efc-node-${n.id}`);
+        circle.setAttribute("fill", "#334155");
+        circle.setAttribute("stroke", "#475569");
+        log(`<span class="bad">  Node ${n.id} (d=${n.distToX.toFixed(2)}) was NEVER REACHED!</span>`);
+      }
+    });
+
+    // Connect to best m
+    log(`<span class="step">---</span>`);
+    log(`<span class="info">Final candidates: [${candidates.map(c => c.id+"("+c.dist.toFixed(2)+")").join(", ")}]</span>`);
+    log(`<span class="info">Connecting X to best m=${M}: ${candidates.slice(0, M).map(c => c.id).join(", ")}</span>`);
+
+    for (let i = 0; i < Math.min(M, candidates.length); i++) {
+      const c = candidates[i];
+      const n = nodeMap[c.id];
+      await sleep(speed);
+      el("line", {
+        x1: newNode.x, y1: newNode.y, x2: n.x, y2: n.y,
+        stroke: "#ef4444", "stroke-width": 3
+      }, svg);
+      const circle = document.getElementById(`efc-node-${c.id}`);
+      circle.setAttribute("fill", "#ef4444");
+      circle.setAttribute("stroke", "#fbbf24");
+      circle.setAttribute("stroke-width", "3");
+      circle.setAttribute("r", "18");
+      log(`<span class="highlight">  Edge: X -- ${c.id} (distance ${c.dist.toFixed(2)})</span>`);
+    }
+
+    // Check: did we get the truly best m?
+    const trueBest = [...nodes].sort((a,b) => a.distToX - b.distToX).slice(0, M);
+    const foundBest = candidates.slice(0, M);
+    const missed = trueBest.filter(t => !foundBest.find(f => f.id === t.id));
+    log(`<span class="step">---</span>`);
+    log(`<span class="info">True ${M} nearest: ${trueBest.map(t => t.id+"("+t.distToX.toFixed(2)+")").join(", ")}</span>`);
+    if (missed.length === 0) {
+      log(`<span class="good">Perfect! Found the true best neighbors.</span>`);
+    } else {
+      log(`<span class="bad">WRONG! Missed: ${missed.map(t => t.id+"("+t.distToX.toFixed(2)+")").join(", ")} — increase ef_construction to find them!</span>`);
+    }
+
+    running = false;
+    btnRun.disabled = false;
+  }
+
+  btnRun.addEventListener("click", runInsertion);
+  btnReset.addEventListener("click", () => { if (!running) drawBase(); });
+
+  drawBase();
+})();
+
+
+// ============================================================
+// SECTION 3: ef_search animation (multi-layer)
+// ============================================================
+// CORRECT HNSW: upper layers are SUBSETS of the same nodes.
+// Layer 0: A,B,C,D,E,F,G,H,I (all nodes)
+// Layer 1: A,C,E,G (subset)
+// Layer 2: A,E (subset)
+// Same node appears at the same x across layers, just different y.
+// ============================================================
+(function() {
+  const svg = document.getElementById("svg-efs");
+  const logEl = document.getElementById("efs-log");
+  const slider = document.getElementById("efs-slider");
+  const valueEl = document.getElementById("efs-value");
+  const btnRun = document.getElementById("efs-run");
+  const btnReset = document.getElementById("efs-reset");
+  const speedSel = document.getElementById("efs-speed");
+
+  const TOP_K = 2;
+
+  // All nodes with their distances to query Q
+  // The SAME node ID appears across layers at the same x position
+  const distToQ = { A: 0.80, B: 0.45, C: 0.32, D: 0.28, E: 0.38, F: 0.55, G: 0.62, H: 0.52, I: 0.10, J: 0.08 };
+
+  // X positions shared across layers (same node = same x)
+  const nodeX = { A: 80, B: 180, C: 280, D: 380, E: 460, F: 580, G: 700, H: 520, I: 660, J: 800 };
+
+  // Layer y positions
+  const layerY = { 2: 50, 1: 170, 0: 310 };
+
+  // Which nodes appear in each layer (upper = subset of lower)
+  const layerNodeIds = {
+    2: ["A", "E"],
+    1: ["A", "C", "E", "G"],
+    0: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+  };
+
+  // Build node objects per layer with proper y offsets for visual variety
+  const yOffsets0 = { A: -15, B: 10, C: -10, D: 15, E: 0, F: -10, G: 10, H: 60, I: 70, J: 55 };
+  const allNodes = {};
+  for (const layer of [2, 1, 0]) {
+    allNodes[layer] = layerNodeIds[layer].map(id => ({
+      id,
+      x: nodeX[id],
+      y: layerY[layer] + (layer === 0 ? (yOffsets0[id] || 0) : 0),
+      distToQ: distToQ[id],
+    }));
+  }
+
+  // Edges per layer — upper layers have longer-range connections
+  const edgesPerLayer = {
+    2: [["A","E"]],
+    1: [["A","C"],["C","E"],["E","G"],["A","E"]],
+    0: [
+      // Upper branch (left side, decent nodes)
+      ["A","B"],["B","C"],["C","D"],["A","C"],
+      // From E going right (mediocre)
+      ["E","F"],["F","G"],["D","E"],
+      // Lower branch — best nodes, but behind "far" gateway H
+      ["E","H"],["H","I"],["I","J"],
+    ]
+  };
+
+  const queryNode = { id: "Q", x: 760, y: 430 };
+  const layerColors = { 2: "#64748b", 1: "#3b82f6", 0: "#22c55e" };
+  const layerLabels = { 2: "Layer 2 (2 nodes)", 1: "Layer 1 (4 nodes)", 0: "Layer 0 (all 10 nodes)" };
+
+  let running = false;
+
+  slider.addEventListener("input", () => {
+    valueEl.textContent = `ef_search = ${slider.value}`;
+  });
+
+  function nodeMapForLayer(layer) {
+    const m = {};
+    allNodes[layer].forEach(n => m[n.id] = n);
+    return m;
+  }
+
+  function getLayerNeighbors(layer, nodeId) {
+    return edgesPerLayer[layer]
+      .filter(([a, b]) => a === nodeId || b === nodeId)
+      .map(([a, b]) => a === nodeId ? b : a);
+  }
+
+  function drawBase() {
+    svg.innerHTML = "";
+    logEl.innerHTML = "";
+
+    // Dashed vertical lines showing same node across layers
+    for (const id of layerNodeIds[2]) {
+      // Layer 2 to Layer 1
+      const n2 = allNodes[2].find(n => n.id === id);
+      const n1 = allNodes[1].find(n => n.id === id);
+      if (n2 && n1) {
+        el("line", { x1: n2.x, y1: n2.y, x2: n1.x, y2: n1.y,
+          stroke: "#1e293b", "stroke-width": 1, "stroke-dasharray": "4,4" }, svg);
+      }
+    }
+    for (const id of layerNodeIds[1]) {
+      const n1 = allNodes[1].find(n => n.id === id);
+      const n0 = allNodes[0].find(n => n.id === id);
+      if (n1 && n0) {
+        el("line", { x1: n1.x, y1: n1.y, x2: n0.x, y2: n0.y,
+          stroke: "#1e293b", "stroke-width": 1, "stroke-dasharray": "4,4" }, svg);
+      }
+    }
+
+    // Layer labels
+    el("text", { x: 12, y: 50, fill: "#64748b", "font-size": "11", "font-weight": "600" }, svg).textContent = "Layer 2 (2 nodes)";
+    el("text", { x: 12, y: 165, fill: "#3b82f6", "font-size": "11", "font-weight": "600" }, svg).textContent = "Layer 1 (4 nodes)";
+    el("text", { x: 12, y: 295, fill: "#22c55e", "font-size": "11", "font-weight": "600" }, svg).textContent = "Layer 0 (all nodes)";
+
+    // Branch labels for Layer 0
+    el("text", { x: 200, y: 280, "text-anchor": "middle", fill: "#475569", "font-size": "10", "font-style": "italic" }, svg).textContent = "upper branch (decent)";
+    el("text", { x: 700, y: 400, "text-anchor": "middle", fill: "#475569", "font-size": "10", "font-style": "italic" }, svg).textContent = "lower branch (BEST nodes)";
+
+    // Edges & nodes per layer
+    for (const layer of [2, 1, 0]) {
+      const color = layerColors[layer];
+      const nm = nodeMapForLayer(layer);
+
+      for (const [a, b] of edgesPerLayer[layer]) {
+        el("line", {
+          x1: nm[a].x, y1: nm[a].y, x2: nm[b].x, y2: nm[b].y,
+          stroke: color, "stroke-width": 2, opacity: 0.5
+        }, svg);
+      }
+
+      // Unique SVG id per layer+node to avoid collisions (same node in multiple layers)
+      allNodes[layer].forEach(n => {
+        el("circle", {
+          cx: n.x, cy: n.y, r: 14, fill: color, stroke: "#f8fafc", "stroke-width": 2,
+          id: `efs-L${layer}-${n.id}`
+        }, svg);
+        el("text", {
+          x: n.x, y: n.y + 4, "text-anchor": "middle", fill: "#f8fafc",
+          "font-size": "10", "font-weight": "700"
+        }, svg).textContent = n.id;
+        el("text", {
+          x: n.x, y: n.y - 20, "text-anchor": "middle", fill: "#475569",
+          "font-size": "9"
+        }, svg).textContent = `d=${n.distToQ.toFixed(2)}`;
+      });
+    }
+
+    // Query node
+    el("circle", {
+      cx: queryNode.x, cy: queryNode.y, r: 16, fill: "#f43f5e", stroke: "#f8fafc", "stroke-width": 2
+    }, svg);
+    el("text", {
+      x: queryNode.x, y: queryNode.y + 5, "text-anchor": "middle", fill: "#f8fafc",
+      "font-size": "12", "font-weight": "800"
+    }, svg).textContent = "Q";
+    el("text", {
+      x: queryNode.x + 30, y: queryNode.y + 5, "text-anchor": "start", fill: "#f43f5e",
+      "font-size": "11"
+    }, svg).textContent = "query";
+  }
+
+  function log(html) {
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  async function runSearch() {
+    if (running) return;
+    running = true;
+    btnRun.disabled = true;
+    const ef = +slider.value;
+    const speed = +speedSel.value;
+
+    drawBase();
+    log(`<span class="info">Searching with ef_search=${ef}, top_k=${TOP_K}</span>`);
+    log(`<span class="step">Same nodes appear across layers. Upper layers = sparse subsets for fast navigation.</span>`);
+
+    // In HNSW, search starts at the single entry point in the top layer
+    let entryPoint = "A";
+
+    for (const layer of [2, 1, 0]) {
+      log(`<span class="step">---</span>`);
+      log(`<span class="info">${layerLabels[layer]} — enter at ${entryPoint}</span>`);
+
+      const nm = nodeMapForLayer(layer);
+      const candidates = [];
+      const visited = new Set();
+      const queue = [entryPoint];
+      visited.add(entryPoint);
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        const n = nm[current];
+        if (!n) continue;
+
+        // Use layer-specific SVG id
+        const circleId = `efs-L${layer}-${current}`;
+        const circle = document.getElementById(circleId);
+        circle.setAttribute("fill", "#f97316");
+        circle.setAttribute("r", "18");
+        log(`<span class="step active">  Visit <strong>${current}</strong> (d=${n.distToQ.toFixed(2)})</span>`);
+        await sleep(speed);
+
+        let accepted = false;
+        if (candidates.length < ef) {
+          candidates.push({ id: current, dist: n.distToQ });
+          candidates.sort((a, b) => a.dist - b.dist);
+          circle.setAttribute("fill", "#38bdf8");
+          circle.setAttribute("r", "14");
+          log(`<span class="good">    + Accepted [${candidates.map(c => c.id+":"+c.dist.toFixed(2)).join(", ")}]</span>`);
+          accepted = true;
+        } else if (n.distToQ < candidates[candidates.length - 1].dist) {
+          const evicted = candidates.pop();
+          const evCircle = document.getElementById(`efs-L${layer}-${evicted.id}`);
+          evCircle.setAttribute("fill", "#c084fc");
+          candidates.push({ id: current, dist: n.distToQ });
+          candidates.sort((a, b) => a.dist - b.dist);
+          circle.setAttribute("fill", "#38bdf8");
+          circle.setAttribute("r", "14");
+          log(`<span class="good">    + Replaces ${evicted.id} [${candidates.map(c => c.id+":"+c.dist.toFixed(2)).join(", ")}]</span>`);
+          accepted = true;
+        } else {
+          circle.setAttribute("fill", "#c084fc");
+          circle.setAttribute("r", "14");
+          log(`<span class="bad">    - REJECTED (${n.distToQ.toFixed(2)} >= worst ${candidates[candidates.length-1].dist.toFixed(2)}). Neighbors NOT explored!</span>`);
+        }
+
+        if (accepted) {
+          const neighbors = getLayerNeighbors(layer, current).filter(id => !visited.has(id));
+          for (const nbrId of neighbors) {
+            visited.add(nbrId);
+            const nbr = nm[nbrId];
+            if (nbr && (candidates.length < ef || nbr.distToQ < candidates[candidates.length - 1].dist)) {
+              queue.push(nbrId);
+            } else if (nbr) {
+              log(`<span class="bad">      skip neighbor ${nbrId} (d=${nbr.distToQ.toFixed(2)})</span>`);
+            }
+          }
+        }
+        await sleep(speed * 0.3);
+      }
+
+      // Drop to next layer: best node in this layer becomes entry point below
+      // In HNSW, you drop to the SAME node one layer down
+      if (layer > 0) {
+        const bestInLayer = candidates[0];
+        entryPoint = bestInLayer.id; // same node, one layer down
+        log(`<span class="info">  Best: ${bestInLayer.id} (d=${bestInLayer.dist.toFixed(2)}) — drop to same node ${bestInLayer.id} in layer ${layer-1}</span>`);
+        await sleep(speed);
+      } else {
+        // Mark unreached L0 nodes
+        allNodes[0].forEach(n => {
+          if (!visited.has(n.id)) {
+            const c = document.getElementById(`efs-L0-${n.id}`);
+            c.setAttribute("fill", "#334155");
+            c.setAttribute("stroke", "#475569");
+            log(`<span class="bad">  ${n.id} (d=${n.distToQ.toFixed(2)}) NEVER REACHED!</span>`);
+          }
+        });
+
+        log(`<span class="step">---</span>`);
+        log(`<span class="info">Final candidates: [${candidates.map(c => c.id+":"+c.dist.toFixed(2)).join(", ")}]</span>`);
+        const results = candidates.slice(0, TOP_K);
+        log(`<span class="highlight">Top ${TOP_K}: ${results.map(r => r.id + " (d=" + r.dist.toFixed(2) + ")").join(", ")}</span>`);
+
+        for (const r of results) {
+          const circle = document.getElementById(`efs-L0-${r.id}`);
+          circle.setAttribute("fill", "#fbbf24");
+          circle.setAttribute("stroke", "#f43f5e");
+          circle.setAttribute("stroke-width", "3");
+          circle.setAttribute("r", "18");
+        }
+
+        const trueBest = [...allNodes[0]].sort((a,b) => a.distToQ - b.distToQ).slice(0, TOP_K);
+        const missed = trueBest.filter(t => !results.find(r => r.id === t.id));
+        log(`<span class="info">True best ${TOP_K}: ${trueBest.map(t => t.id+"("+t.distToQ.toFixed(2)+")").join(", ")}</span>`);
+        if (missed.length === 0) {
+          log(`<span class="good">Perfect recall!</span>`);
+        } else {
+          log(`<span class="bad">MISSED: ${missed.map(t => t.id+"("+t.distToQ.toFixed(2)+")").join(", ")} — increase ef_search!</span>`);
+        }
+      }
+    }
+
+    running = false;
+    btnRun.disabled = false;
+  }
+
+  btnRun.addEventListener("click", runSearch);
+  btnReset.addEventListener("click", () => { if (!running) drawBase(); });
+
+  drawBase();
+})();
+
+
+// ============================================================
+// SECTION 4: Side-by-side comparison
+// ============================================================
+// Same two-branch graph, proper BFS, ef=2 vs ef=6
+// ============================================================
+(function() {
+  const btnRun = document.getElementById("cmp-run");
+  const btnReset = document.getElementById("cmp-reset");
+
+  // Two-branch graph — same idea: upper branch decent, lower branch best
+  const nodes = [
+    { id: "A", x: 40,  y: 100, distToQ: 0.80 },
+    // Upper branch
+    { id: "B", x: 130, y: 55,  distToQ: 0.45 },
+    { id: "C", x: 230, y: 40,  distToQ: 0.30 },
+    { id: "D", x: 330, y: 55,  distToQ: 0.27 },
+    // Lower branch — best nodes behind "far" gateway G
+    { id: "G", x: 110, y: 170, distToQ: 0.72 },
+    { id: "H", x: 220, y: 185, distToQ: 0.58 },
+    { id: "I", x: 320, y: 170, distToQ: 0.09 },
+    { id: "J", x: 400, y: 185, distToQ: 0.07 },
+  ];
+  const edges = [
+    ["A","B"],["B","C"],["C","D"],
+    ["A","G"],["G","H"],["H","I"],["I","J"],
+  ];
+  const queryNode = { x: 390, y: 120 };
+
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+
+  function getNeighbors(nodeId) {
+    return edges
+      .filter(([a, b]) => a === nodeId || b === nodeId)
+      .map(([a, b]) => a === nodeId ? b : a);
+  }
+
+  let running = false;
+
+  function drawGraph(svgId, logId) {
+    const svg = document.getElementById(svgId);
+    const logEl = document.getElementById(logId);
+    svg.innerHTML = "";
+    logEl.innerHTML = "";
+
+    // Branch labels
+    el("text", { x: 180, y: 22, "text-anchor": "middle", fill: "#475569", "font-size": "9", "font-style": "italic" }, svg).textContent = "upper (decent)";
+    el("text", { x: 260, y: 215, "text-anchor": "middle", fill: "#475569", "font-size": "9", "font-style": "italic" }, svg).textContent = "lower (BEST)";
+
+    for (const [a, b] of edges) {
+      el("line", {
+        x1: nodeMap[a].x, y1: nodeMap[a].y, x2: nodeMap[b].x, y2: nodeMap[b].y,
+        stroke: "#334155", "stroke-width": 1.5
+      }, svg);
+    }
+
+    nodes.forEach(n => {
+      el("circle", {
+        cx: n.x, cy: n.y, r: 12, fill: "#22c55e", stroke: "#f8fafc", "stroke-width": 2,
+        id: `${svgId}-node-${n.id}`
+      }, svg);
+      el("text", {
+        x: n.x, y: n.y + 4, "text-anchor": "middle", fill: "#f8fafc",
+        "font-size": "9", "font-weight": "700"
+      }, svg).textContent = n.id;
+      el("text", {
+        x: n.x, y: n.y - 17, "text-anchor": "middle", fill: "#475569", "font-size": "8"
+      }, svg).textContent = n.distToQ.toFixed(2);
+    });
+
+    el("circle", {
+      cx: queryNode.x, cy: queryNode.y, r: 12, fill: "#f43f5e", stroke: "#f8fafc", "stroke-width": 2
+    }, svg);
+    el("text", {
+      x: queryNode.x, y: queryNode.y + 4, "text-anchor": "middle", fill: "#f8fafc",
+      "font-size": "10", "font-weight": "800"
+    }, svg).textContent = "Q";
+  }
+
+  function logTo(logId, html) {
+    const logEl = document.getElementById(logId);
+    logEl.innerHTML += html + "<br>";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  async function runOne(svgId, logId, ef, speed) {
+    const TOP_K = 2;
+    const candidates = [];
+    const visited = new Set();
+    const queue = ["A"];
+    visited.add("A");
+    let nodesVisited = 0;
+
+    logTo(logId, `<span class="info">ef_search=${ef}, start at A</span>`);
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      const n = nodeMap[nodeId];
+      nodesVisited++;
+
+      const circle = document.getElementById(`${svgId}-node-${nodeId}`);
+      circle.setAttribute("fill", "#f97316");
+      circle.setAttribute("r", "15");
+      await sleep(speed);
+
+      let accepted = false;
+      if (candidates.length < ef) {
+        candidates.push({ id: nodeId, dist: n.distToQ });
+        candidates.sort((a, b) => a.dist - b.dist);
+        circle.setAttribute("fill", "#38bdf8");
+        circle.setAttribute("r", "12");
+        logTo(logId, `<span class="good">+${nodeId}(${n.distToQ.toFixed(2)}) [${candidates.map(c=>c.id).join(",")}]</span>`);
+        accepted = true;
+      } else if (n.distToQ < candidates[candidates.length - 1].dist) {
+        const ev = candidates.pop();
+        document.getElementById(`${svgId}-node-${ev.id}`).setAttribute("fill", "#c084fc");
+        candidates.push({ id: nodeId, dist: n.distToQ });
+        candidates.sort((a, b) => a.dist - b.dist);
+        circle.setAttribute("fill", "#38bdf8");
+        circle.setAttribute("r", "12");
+        logTo(logId, `<span class="good">+${nodeId} repl ${ev.id} [${candidates.map(c=>c.id).join(",")}]</span>`);
+        accepted = true;
+      } else {
+        circle.setAttribute("fill", "#c084fc");
+        circle.setAttribute("r", "12");
+        logTo(logId, `<span class="bad">-${nodeId}(${n.distToQ.toFixed(2)}) REJECTED</span>`);
+      }
+
+      if (accepted) {
+        const neighbors = getNeighbors(nodeId).filter(id => !visited.has(id));
+        for (const nbrId of neighbors) {
+          visited.add(nbrId);
+          const nbr = nodeMap[nbrId];
+          if (candidates.length < ef || nbr.distToQ < candidates[candidates.length - 1].dist) {
+            queue.push(nbrId);
+          }
+        }
+      }
+      await sleep(speed * 0.4);
+    }
+
+    // Gray out unreached nodes
+    nodes.forEach(n => {
+      if (!visited.has(n.id)) {
+        const c = document.getElementById(`${svgId}-node-${n.id}`);
+        c.setAttribute("fill", "#334155");
+        c.setAttribute("stroke", "#475569");
+        logTo(logId, `<span class="bad">${n.id}(${n.distToQ.toFixed(2)}) NEVER REACHED</span>`);
+      }
+    });
+
+    const results = candidates.slice(0, TOP_K);
+    for (const r of results) {
+      const c = document.getElementById(`${svgId}-node-${r.id}`);
+      c.setAttribute("fill", "#fbbf24");
+      c.setAttribute("stroke", "#f43f5e");
+      c.setAttribute("stroke-width", "3");
+      c.setAttribute("r", "16");
+    }
+
+    const trueBest = [...nodes].sort((a,b) => a.distToQ - b.distToQ).slice(0, TOP_K);
+    const missed = trueBest.filter(t => !results.find(r => r.id === t.id));
+    logTo(logId, `<span class="step">---</span>`);
+    logTo(logId, `<span class="highlight">Result: ${results.map(r=>r.id+"("+r.dist.toFixed(2)+")").join(", ")}</span>`);
+    logTo(logId, `<span class="info">Visited: ${nodesVisited}/${nodes.length}</span>`);
+    if (missed.length === 0) {
+      logTo(logId, `<span class="good">Perfect recall!</span>`);
+    } else {
+      logTo(logId, `<span class="bad">Missed: ${missed.map(m=>m.id+"("+m.distToQ.toFixed(2)+")").join(", ")}</span>`);
+    }
+  }
+
+  async function runBoth() {
+    if (running) return;
+    running = true;
+    btnRun.disabled = true;
+    drawGraph("svg-cmp-low", "cmp-low-log");
+    drawGraph("svg-cmp-high", "cmp-high-log");
+    await Promise.all([
+      runOne("svg-cmp-low", "cmp-low-log", 2, 600),
+      runOne("svg-cmp-high", "cmp-high-log", 6, 600),
+    ]);
+    running = false;
+    btnRun.disabled = false;
+  }
+
+  btnRun.addEventListener("click", runBoth);
+  btnReset.addEventListener("click", () => {
+    if (!running) {
+      drawGraph("svg-cmp-low", "cmp-low-log");
+      drawGraph("svg-cmp-high", "cmp-high-log");
+    }
+  });
+
+  drawGraph("svg-cmp-low", "cmp-low-log");
+  drawGraph("svg-cmp-high", "cmp-high-log");
+})();
+</script>
+</body>
+</html>

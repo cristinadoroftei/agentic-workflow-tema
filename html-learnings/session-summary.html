@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Summary: RAG & HNSW Deep Dive</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.7; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+  h1 { text-align: center; font-size: 1.8rem; margin-bottom: 8px; color: #f8fafc; }
+  .subtitle { text-align: center; color: #94a3b8; margin-bottom: 40px; }
+
+  .topic { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 20px; border-left: 4px solid #334155; transition: all 0.3s; }
+  .topic:hover { border-left-color: #38bdf8; }
+  .topic-header { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 12px; }
+  .topic-num { background: #2563eb; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; flex-shrink: 0; }
+  .topic h2 { font-size: 1.1rem; color: #f8fafc; }
+  .topic .question { color: #fbbf24; font-style: italic; margin-bottom: 8px; font-size: 0.95rem; }
+  .topic .answer { color: #94a3b8; font-size: 0.9rem; }
+  .topic .answer strong { color: #e2e8f0; }
+  .topic .tag { display: inline-block; background: #0f172a; border: 1px solid #334155; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: #64748b; margin-right: 6px; margin-top: 8px; }
+  .topic .tag.red { border-color: #ef4444; color: #ef4444; }
+  .topic .tag.blue { border-color: #38bdf8; color: #38bdf8; }
+  .topic .tag.green { border-color: #22c55e; color: #22c55e; }
+  .topic .tag.yellow { border-color: #fbbf24; color: #fbbf24; }
+
+  .flow { display: flex; align-items: center; justify-content: center; gap: 0; margin: 30px 0; flex-wrap: wrap; }
+  .flow-box { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 16px; font-size: 0.85rem; text-align: center; min-width: 120px; }
+  .flow-arrow { color: #475569; font-size: 1.2rem; padding: 0 6px; }
+
+  .section-divider { text-align: center; color: #475569; margin: 30px 0 20px; font-size: 0.85rem; letter-spacing: 2px; text-transform: uppercase; }
+
+  .files { background: #1e293b; border-radius: 12px; padding: 24px; margin-top: 30px; border: 1px solid #334155; }
+  .files h2 { color: #38bdf8; font-size: 1.1rem; margin-bottom: 12px; }
+  .file-link { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+  .file-link:last-child { border-bottom: none; }
+  .file-icon { color: #22c55e; font-weight: 700; }
+  .file-name { color: #f8fafc; font-family: 'SF Mono', monospace; }
+  .file-desc { color: #64748b; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Session Summary: RAG & HNSW Deep Dive</h1>
+<p class="subtitle">Skillab Lectia 3 & 4 - Key Questions & Answers</p>
+
+<!-- Overview flow -->
+<div class="flow">
+  <div class="flow-box" style="border-color:#64748b">PDF Documents</div>
+  <span class="flow-arrow">-></span>
+  <div class="flow-box" style="border-color:#8b5cf6">Text Chunks</div>
+  <span class="flow-arrow">-></span>
+  <div class="flow-box" style="border-color:#f59e0b">Embedding Model</div>
+  <span class="flow-arrow">-></span>
+  <div class="flow-box" style="border-color:#22c55e">Vectors in DB</div>
+  <span class="flow-arrow">-></span>
+  <div class="flow-box" style="border-color:#ef4444">HNSW Index</div>
+  <span class="flow-arrow">-></span>
+  <div class="flow-box" style="border-color:#38bdf8">Query &lt;=&gt;</div>
+</div>
+
+<div class="section-divider">--- Questions & Answers ---</div>
+
+<!-- Q1 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">1</div>
+    <h2>Same Embedding Model for Indexing and Querying</h2>
+  </div>
+  <div class="question">"Cand faci extragerea din RAG trebuie sa folosesti acelasi model cu care ai facut initial embedingul?"</div>
+  <div class="answer">
+    <strong>Yes.</strong> Each embedding model creates its own unique vector space. Model A encodes "contract termination" as [0.12, -0.87, ...] while Model B encodes it as [0.95, 0.11, ...]. Cosine similarity between vectors from different models is meaningless — like comparing coordinates from two different map projections.
+    <br><br>
+    <strong>If you switch models, you must re-embed ALL documents.</strong>
+  </div>
+  <span class="tag red">Embeddings</span>
+  <span class="tag">Lectia 3</span>
+</div>
+
+<!-- Q2 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">2</div>
+    <h2>How HNSW Works</h2>
+  </div>
+  <div class="question">"How does HNSW work? What does it actually do?"</div>
+  <div class="answer">
+    <strong>HNSW = Hierarchical Navigable Small World.</strong> An approximate nearest neighbor (ANN) index.
+    <br><br>
+    <strong>Structure:</strong> Multi-layer graph pyramid.
+    Layer 0 has ALL vectors. Each upper layer is a sparser random subset with longer-range connections.
+    <br><br>
+    <strong>Search:</strong> Start at top layer (few nodes, big jumps) -> greedy hop to the closest node -> drop one layer -> refine -> repeat until Layer 0 -> return top-k results.
+    <br><br>
+    <strong>Trade-off:</strong> ~95-99% recall (might miss the absolute best match) but 100-200x faster than brute force.
+    <br><br>
+    Without HNSW: Seq Scan ~450ms. With HNSW: Index Scan ~2ms.
+  </div>
+  <span class="tag blue">HNSW</span>
+  <span class="tag">Lectia 4, slide 59-60</span>
+</div>
+
+<!-- Q3 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">3</div>
+    <h2>The Three HNSW Parameters: m, ef_construction, ef_search</h2>
+  </div>
+  <div class="question">"Can you explain ef_construction and ef_search? I'm not sure I understand the difference."</div>
+  <div class="answer">
+    <strong>m</strong> = max edges per node when inserted. More edges = better recall, more RAM.<br><br>
+    <strong>ef_construction</strong> = candidate list size during INDEX BUILD. Controls how carefully neighbors are chosen. Paid once. Can't change without rebuilding. Higher = better graph quality but slower build.<br><br>
+    <strong>ef_search</strong> = candidate list size during QUERY. Controls how thoroughly the graph is explored per query. Tunable at runtime (<code>SET hnsw.ef_search = 100</code>). Higher = better recall but slower queries.
+    <br><br>
+    <strong>Key insight:</strong> ef_construction > m because the candidate list is the "interview pool" — you interview ef_construction candidates to pick the best m. A larger pool finds better neighbors.
+    <br><br>
+    <strong>Why they matter:</strong> The algorithm only explores neighbors of nodes that are IN the candidate list. If a node is rejected (list full, too far), its neighbors are NEVER explored. A small ef means entire graph branches become unreachable.
+  </div>
+  <span class="tag yellow">Parameters</span>
+  <span class="tag">Lectia 4, slide 59-61</span>
+</div>
+
+<!-- Q4 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">4</div>
+    <h2>Layer 0 = All Chunks in the RAG Database</h2>
+  </div>
+  <div class="question">"On Layer 0 is the actual total chunks we have in the RAG DB?"</div>
+  <div class="answer">
+    <strong>Yes.</strong> Layer 0 = ALL vectors. Upper layers are random subsets of the SAME nodes.
+    <br><br>
+    Example with 100,000 chunks: Layer 0 = 100,000 nodes. Layer 1 ~ 8,700. Layer 2 ~ 750.
+    <br><br>
+    Upper layers use the <strong>same node IDs</strong> as Layer 0 — they're not different data. When you find the best node in Layer 2, you drop to that <strong>same node</strong> in Layer 1.
+  </div>
+  <span class="tag blue">HNSW</span>
+  <span class="tag green">Architecture</span>
+</div>
+
+<!-- Q5 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">5</div>
+    <h2>Why ef_construction Needs to Be Higher Than m</h2>
+  </div>
+  <div class="question">"If m is 2, why don't we set ef_construction to 2 as well?"</div>
+  <div class="answer">
+    <strong>Analogy: hiring.</strong> m = how many you hire. ef_construction = how many you interview. Interview 2 people for 2 positions? You'll miss great candidates.
+    <br><br>
+    <strong>Technical reason:</strong> The graph has branches. With ef=2, the candidate list fills up fast. When a "gateway" node is rejected, its entire branch (which might contain the BEST neighbors) is never explored. With ef=4+, the gateway stays in the list long enough for its neighbors to be discovered.
+  </div>
+  <span class="tag yellow">Parameters</span>
+  <span class="tag red">Key Insight</span>
+</div>
+
+<!-- Q6 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">6</div>
+    <h2>Operator Class Must Match Query Operator</h2>
+  </div>
+  <div class="question">"Can you explain vector_cosine_ops and the &lt;=&gt; operator better?"</div>
+  <div class="answer">
+    The index is built for ONE specific distance metric. The query must use the matching operator.
+    <br><br>
+    <code>vector_cosine_ops</code> + <code>&lt;=&gt;</code> = cosine distance (used for text embeddings)<br>
+    <code>vector_l2_ops</code> + <code>&lt;-&gt;</code> = Euclidean distance<br>
+    <code>vector_ip_ops</code> + <code>&lt;#&gt;</code> = inner product<br><br>
+    <strong>If they don't match, PostgreSQL ignores the index</strong> and falls back to sequential scan.
+    Like organizing a library by topic but searching by page count — useless.
+  </div>
+  <span class="tag green">pgvector</span>
+  <span class="tag">Lectia 4, slide 54, 61</span>
+</div>
+
+<!-- Q7 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">7</div>
+    <h2>ONE Graph for ALL Chunks, Not One Per Chunk</h2>
+  </div>
+  <div class="question">"Why do we only have one HNSW graph? I thought each chunk gets its own small graph."</div>
+  <div class="answer">
+    <strong>There is ONE graph.</strong> Each chunk embedding is ONE node. Edges connect nodes with similar embeddings.
+    <br><br>
+    When you INSERT a new chunk, PostgreSQL automatically adds it as a new node and connects it to its m nearest existing nodes. The graph grows but stays unified.
+    <br><br>
+    <strong>Nodes</strong> = rows in document_chunks table (each chunk's embedding)<br>
+    <strong>Edges</strong> = "these two chunks have similar embeddings" (cosine proximity)
+  </div>
+  <span class="tag red">Key Insight</span>
+  <span class="tag blue">HNSW</span>
+</div>
+
+<!-- Q8 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">8</div>
+    <h2>The SQL Query Explained</h2>
+  </div>
+  <div class="question">"In ORDER BY embedding &lt;=&gt; '[0.12, 0.45, ...]'::vector — embedding is the column and [0.12, ...] is the query vector?"</div>
+  <div class="answer">
+    <strong>Yes.</strong><br>
+    <code>embedding</code> = the column (each row's chunk vector)<br>
+    <code>'[0.12, ...]'::vector</code> = the query vector (user's question, embedded with same model)<br>
+    <code>&lt;=&gt;</code> = cosine distance operator<br><br>
+    The HNSW index traverses the graph instead of comparing every row.
+  </div>
+  <span class="tag green">pgvector</span>
+  <span class="tag">SQL</span>
+</div>
+
+<!-- Q9 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">9</div>
+    <h2>HNSW Index Auto-Updates on INSERT</h2>
+  </div>
+  <div class="question">"When you add a new document, is the HNSW run automatically so the index graph is updated?"</div>
+  <div class="answer">
+    <strong>Yes.</strong> Just like a B-tree index, PostgreSQL automatically updates the HNSW graph on every INSERT. No manual rebuild needed.
+    <br><br>
+    <strong>Manual rebuild only for:</strong> first-time creation, changing operator class, changing m or ef_construction, or optional REINDEX after many deletes.
+  </div>
+  <span class="tag green">pgvector</span>
+  <span class="tag">Operations</span>
+</div>
+
+<!-- Q10 -->
+<div class="topic">
+  <div class="topic-header">
+    <div class="topic-num">10</div>
+    <h2>HNSW vs IVFFlat</h2>
+  </div>
+  <div class="question">"What's the difference between HNSW and IVFFlat?"</div>
+  <div class="answer">
+    <strong>HNSW</strong> = graph-based. One connected graph. Traverse edges greedily. Fast (~2ms), high RAM.<br>
+    <strong>IVFFlat</strong> = cluster-based. Vectors grouped into clusters by centroids. Find nearest centroid, scan that cluster. Less RAM, slower, can miss results at boundaries.
+  </div>
+  <span class="tag blue">HNSW</span>
+  <span class="tag">Lectia 4, slide 59</span>
+</div>
+
+<!-- Generated files -->
+<div class="files">
+  <h2>Generated Interactive Visualizations</h2>
+  <div class="file-link">
+    <span class="file-icon">></span>
+    <span class="file-name">hnsw-explained.html</span>
+    <span class="file-desc">- Interactive HNSW demos: m slider, ef_construction animation, ef_search multi-layer, side-by-side comparison</span>
+  </div>
+  <div class="file-link">
+    <span class="file-icon">></span>
+    <span class="file-name">rag-pipeline-explained.html</span>
+    <span class="file-desc">- Full RAG pipeline: PDF to chunks to embeddings to DB to HNSW index, query animation, HNSW vs IVFFlat</span>
+  </div>
+  <div class="file-link">
+    <span class="file-icon">></span>
+    <span class="file-name">session-summary.html</span>
+    <span class="file-desc">- This page: all key questions and answers from the session</span>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
