@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Source Architecture — SQL, NoSQL, CSV, RAG</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  .header {
+    text-align: center;
+    padding: 40px 20px 10px;
+  }
+  .header h1 {
+    font-size: 2rem;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6, #fb923c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+  .header p {
+    color: #94a3b8;
+    font-size: 1rem;
+    max-width: 750px;
+    margin: 0 auto;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+    flex-wrap: wrap;
+  }
+  .tab {
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.3s;
+  }
+  .tab:hover { border-color: #60a5fa; color: #e2e8f0; }
+  .tab.active { background: #1e3a5f; border-color: #60a5fa; color: #60a5fa; }
+
+  .panel { display: none; max-width: 1100px; margin: 0 auto; padding: 0 20px 60px; }
+  .panel.active { display: block; }
+
+  /* Architecture diagram */
+  .arch-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .arch-box {
+    border-radius: 14px;
+    padding: 20px 28px;
+    border: 1px solid;
+    text-align: center;
+    position: relative;
+    transition: all 0.3s;
+  }
+  .arch-box h3 { font-size: 1.1rem; margin-bottom: 6px; }
+  .arch-box p { font-size: 0.85rem; color: #94a3b8; line-height: 1.4; }
+
+  .arch-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px 0;
+  }
+  .arch-arrow .line {
+    width: 3px;
+    height: 30px;
+    background: linear-gradient(to bottom, #334155, #60a5fa);
+  }
+  .arch-arrow .tip {
+    width: 0;
+    height: 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 8px solid #60a5fa;
+  }
+  .arch-arrow-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 2px;
+  }
+
+  /* Branch arrows */
+  .branch-container {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    position: relative;
+    padding: 20px 0;
+  }
+  .branch-lines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+  }
+
+  /* Agent cards row */
+  .agents-row {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .agent-card {
+    flex: 1;
+    min-width: 200px;
+    max-width: 260px;
+    border-radius: 14px;
+    padding: 20px;
+    border: 1px solid;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.3s;
+    cursor: pointer;
+  }
+  .agent-card:hover { transform: translateY(-4px); }
+  .agent-card .agent-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin: 0 auto;
+  }
+  .agent-card .agent-name {
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+  }
+  .agent-card .agent-desc {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .agent-card .agent-converts {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    padding: 8px 12px;
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  /* Colors per agent */
+  .sql-color { border-color: rgba(96, 165, 250, 0.4); background: rgba(96, 165, 250, 0.05); }
+  .sql-color .agent-icon { background: #60a5fa; color: #0f172a; }
+  .sql-color .agent-name { color: #60a5fa; }
+  .sql-color .agent-converts { background: rgba(96, 165, 250, 0.1); color: #93c5fd; }
+
+  .nosql-color { border-color: rgba(251, 146, 60, 0.4); background: rgba(251, 146, 60, 0.05); }
+  .nosql-color .agent-icon { background: #fb923c; color: #0f172a; }
+  .nosql-color .agent-name { color: #fb923c; }
+  .nosql-color .agent-converts { background: rgba(251, 146, 60, 0.1); color: #fdba74; }
+
+  .csv-color { border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.05); }
+  .csv-color .agent-icon { background: #34d399; color: #0f172a; }
+  .csv-color .agent-name { color: #34d399; }
+  .csv-color .agent-converts { background: rgba(52, 211, 153, 0.1); color: #6ee7b7; }
+
+  .rag-color { border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.05); }
+  .rag-color .agent-icon { background: #a78bfa; color: #0f172a; }
+  .rag-color .agent-name { color: #a78bfa; }
+  .rag-color .agent-converts { background: rgba(167, 139, 250, 0.1); color: #c4b5fd; }
+
+  .router-color { border-color: rgba(244, 114, 182, 0.4); background: rgba(244, 114, 182, 0.05); }
+  .router-color h3 { color: #f472b6; }
+
+  .user-color { border-color: rgba(226, 232, 240, 0.3); background: rgba(226, 232, 240, 0.05); }
+  .user-color h3 { color: #e2e8f0; }
+
+  .aggregate-color { border-color: rgba(250, 204, 21, 0.4); background: rgba(250, 204, 21, 0.05); }
+  .aggregate-color h3 { color: #facc15; }
+
+  /* Data source boxes */
+  .datasource-row {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .datasource {
+    flex: 1;
+    min-width: 200px;
+    max-width: 260px;
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+    font-size: 0.8rem;
+    border: 1px dashed;
+  }
+  .datasource .ds-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+  }
+  .datasource .ds-content {
+    color: #94a3b8;
+    font-size: 0.75rem;
+  }
+
+  /* Data block */
+  .data-block {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    overflow-x: auto;
+  }
+  .key { color: #60a5fa; }
+  .str { color: #34d399; }
+  .num { color: #fb923c; }
+  .comment { color: #64748b; font-style: italic; }
+  .highlight { color: #f472b6; font-weight: 600; }
+
+  /* Callout */
+  .callout {
+    margin-top: 16px;
+    padding: 14px 18px;
+    border-radius: 10px;
+    border-left: 3px solid;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .callout-blue { background: rgba(96,165,250,0.08); border-color: #60a5fa; color: #93c5fd; }
+  .callout-purple { background: rgba(167,139,250,0.08); border-color: #a78bfa; color: #c4b5fd; }
+  .callout-pink { background: rgba(244,114,182,0.08); border-color: #f472b6; color: #f9a8d4; }
+  .callout-orange { background: rgba(251,146,60,0.08); border-color: #fb923c; color: #fdba74; }
+  .callout-green { background: rgba(52,211,153,0.08); border-color: #34d399; color: #6ee7b7; }
+  .callout-yellow { background: rgba(250,204,21,0.08); border-color: #facc15; color: #fde68a; }
+
+  /* Interactive example */
+  .example-section {
+    margin-top: 30px;
+  }
+  .example-question {
+    background: rgba(226,232,240,0.05);
+    border: 1px solid rgba(226,232,240,0.2);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .example-question .q-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .example-question .q-text {
+    font-size: 1.1rem;
+    color: #e2e8f0;
+    font-weight: 500;
+  }
+
+  .routing-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .routing-step {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid #1e293b;
+    background: #1e293b;
+    transition: all 0.5s;
+    opacity: 0.3;
+  }
+  .routing-step.visible { opacity: 1; }
+  .routing-step .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+  .routing-step .step-content { flex: 1; }
+  .routing-step .step-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+  }
+  .routing-step .step-detail {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+  .routing-step .step-code {
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    background: #0f172a;
+    padding: 10px 14px;
+    border-radius: 8px;
+    color: #cbd5e1;
+    overflow-x: auto;
+  }
+
+  .play-btn {
+    display: block;
+    margin: 20px auto;
+    padding: 12px 32px;
+    border-radius: 10px;
+    border: 1px solid #f472b6;
+    background: rgba(244,114,182,0.1);
+    color: #f472b6;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .play-btn:hover { background: rgba(244,114,182,0.2); }
+
+  /* Source description cards */
+  .source-desc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .source-desc-card {
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid;
+  }
+  .source-desc-card h4 {
+    font-size: 0.95rem;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .source-desc-card .sdc-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.75rem;
+  }
+  .source-desc-card ul {
+    list-style: none;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .source-desc-card li::before {
+    content: '>';
+    margin-right: 8px;
+    color: #475569;
+    font-family: monospace;
+  }
+
+  /* Comparison table */
+  .cmp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    margin-top: 16px;
+  }
+  .cmp-table th {
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid #334155;
+  }
+  .cmp-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #1e293b;
+  }
+  .cmp-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* Multiple RAG indexes */
+  .rag-indexes {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .rag-index-card {
+    flex: 1;
+    min-width: 150px;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(167,139,250,0.3);
+    background: rgba(167,139,250,0.04);
+    text-align: center;
+  }
+  .rag-index-card .ric-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: #a78bfa;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .rag-index-card .ric-desc {
+    font-size: 0.75rem;
+    color: #94a3b8;
+  }
+
+  /* SVG for branch lines */
+  .branch-svg {
+    width: 100%;
+    height: 60px;
+    margin: 0;
+  }
+
+  @media (max-width: 700px) {
+    .agents-row, .datasource-row, .source-desc-grid { flex-direction: column; align-items: center; }
+    .agent-card, .datasource { max-width: 100%; }
+    .header h1 { font-size: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Multi-Source Architecture</h1>
+  <p>How to work with SQL, NoSQL, CSV and RAG together &mdash; each data source keeps its own format, with a specialized agent for each</p>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showPanel('architecture')">Architecture</div>
+  <div class="tab" onclick="showPanel('sources')">Source Descriptions</div>
+  <div class="tab" onclick="showPanel('example')">Live Example</div>
+  <div class="tab" onclick="showPanel('rag-role')">Where RAG Fits</div>
+  <div class="tab" onclick="showPanel('langgraph')">LangGraph Connection</div>
+</div>
+
+<!-- ==================== ARCHITECTURE ==================== -->
+<div class="panel active" id="panel-architecture">
+
+  <div class="arch-container">
+
+    <!-- User question -->
+    <div class="arch-box user-color" style="width:100%;max-width:500px">
+      <h3>User Question (Natural Language)</h3>
+      <p>"Care sunt clientii cu review-uri negative din Bucuresti?"</p>
+    </div>
+
+    <div class="arch-arrow">
+      <div class="line"></div>
+      <div class="tip"></div>
+    </div>
+
+    <!-- Router -->
+    <div class="arch-box router-color" style="width:100%;max-width:500px">
+      <h3>Router / LLM</h3>
+      <p>Reads source descriptions, decides which agent(s) to call.<br>Can call <strong>multiple agents</strong> for one question.</p>
+    </div>
+
+    <!-- Branch SVG -->
+    <svg class="branch-svg" viewBox="0 0 1000 60" preserveAspectRatio="xMidYMid meet">
+      <line x1="500" y1="0" x2="125" y2="55" stroke="#60a5fa" stroke-width="2" opacity="0.4"/>
+      <line x1="500" y1="0" x2="375" y2="55" stroke="#fb923c" stroke-width="2" opacity="0.4"/>
+      <line x1="500" y1="0" x2="625" y2="55" stroke="#34d399" stroke-width="2" opacity="0.4"/>
+      <line x1="500" y1="0" x2="875" y2="55" stroke="#a78bfa" stroke-width="2" opacity="0.4"/>
+      <circle cx="125" cy="55" r="4" fill="#60a5fa"/>
+      <circle cx="375" cy="55" r="4" fill="#fb923c"/>
+      <circle cx="625" cy="55" r="4" fill="#34d399"/>
+      <circle cx="875" cy="55" r="4" fill="#a78bfa"/>
+    </svg>
+
+    <!-- Agent cards -->
+    <div class="agents-row">
+      <div class="agent-card sql-color">
+        <div class="agent-icon">SQL</div>
+        <div class="agent-name">SQL Agent</div>
+        <div class="agent-desc">Takes natural language, converts to SQL query</div>
+        <div class="agent-converts">NL &rarr; SELECT ... FROM ... WHERE</div>
+      </div>
+      <div class="agent-card nosql-color">
+        <div class="agent-icon">NoS</div>
+        <div class="agent-name">NoSQL Agent</div>
+        <div class="agent-desc">Takes natural language, converts to NoSQL query</div>
+        <div class="agent-converts">NL &rarr; db.find({city: "Bucuresti"})</div>
+      </div>
+      <div class="agent-card csv-color">
+        <div class="agent-icon">CSV</div>
+        <div class="agent-name">CSV Agent</div>
+        <div class="agent-desc">Takes natural language, converts to filter/aggregation</div>
+        <div class="agent-converts">NL &rarr; df[df["region"]=="BUC"]</div>
+      </div>
+      <div class="agent-card rag-color">
+        <div class="agent-icon">RAG</div>
+        <div class="agent-name">RAG Agent</div>
+        <div class="agent-desc">Takes natural language, does embedding search on text</div>
+        <div class="agent-converts">NL &rarr; embed &rarr; similarity_search</div>
+      </div>
+    </div>
+
+    <!-- Down arrows from agents -->
+    <svg class="branch-svg" viewBox="0 0 1000 40" preserveAspectRatio="xMidYMid meet" style="height:40px">
+      <line x1="125" y1="0" x2="125" y2="30" stroke="#60a5fa" stroke-width="2" opacity="0.4"/>
+      <line x1="375" y1="0" x2="375" y2="30" stroke="#fb923c" stroke-width="2" opacity="0.4"/>
+      <line x1="625" y1="0" x2="625" y2="30" stroke="#34d399" stroke-width="2" opacity="0.4"/>
+      <line x1="875" y1="0" x2="875" y2="30" stroke="#a78bfa" stroke-width="2" opacity="0.4"/>
+      <polygon points="121,30 129,30 125,38" fill="#60a5fa"/>
+      <polygon points="371,30 379,30 375,38" fill="#fb923c"/>
+      <polygon points="621,30 629,30 625,38" fill="#34d399"/>
+      <polygon points="871,30 879,30 875,38" fill="#a78bfa"/>
+    </svg>
+
+    <!-- Data sources -->
+    <div class="datasource-row">
+      <div class="datasource sql-color">
+        <div class="ds-name" style="color:#60a5fa">PostgreSQL</div>
+        <div class="ds-content">customers, orders, invoices<br>Structured, relational data</div>
+      </div>
+      <div class="datasource nosql-color">
+        <div class="ds-name" style="color:#fb923c">MongoDB</div>
+        <div class="ds-content">addresses, locations, reviews<br>Flexible, document-based</div>
+      </div>
+      <div class="datasource csv-color">
+        <div class="ds-name" style="color:#34d399">CSV Files</div>
+        <div class="ds-content">reports, exports, logs<br>Tabular flat files</div>
+      </div>
+      <div class="datasource rag-color">
+        <div class="ds-name" style="color:#a78bfa">pgvector / HNSW</div>
+        <div class="ds-content">contracts, documents, policies<br>Unstructured text with embeddings</div>
+      </div>
+    </div>
+
+    <!-- Converge arrows -->
+    <svg class="branch-svg" viewBox="0 0 1000 60" preserveAspectRatio="xMidYMid meet">
+      <line x1="125" y1="5" x2="500" y2="55" stroke="#60a5fa" stroke-width="2" opacity="0.4"/>
+      <line x1="375" y1="5" x2="500" y2="55" stroke="#fb923c" stroke-width="2" opacity="0.4"/>
+      <line x1="625" y1="5" x2="500" y2="55" stroke="#34d399" stroke-width="2" opacity="0.4"/>
+      <line x1="875" y1="5" x2="500" y2="55" stroke="#a78bfa" stroke-width="2" opacity="0.4"/>
+      <circle cx="500" cy="55" r="5" fill="#facc15"/>
+    </svg>
+
+    <!-- Aggregate -->
+    <div class="arch-box aggregate-color" style="width:100%;max-width:500px">
+      <h3>Aggregate Results</h3>
+      <p>Combine outputs from all agents, LLM formulates the final answer</p>
+    </div>
+
+  </div>
+
+  <div class="callout callout-pink" style="margin-top:30px">
+    <strong>Key principle:</strong> Don't force all data into one mechanism. SQL stays in SQL. NoSQL stays in NoSQL. RAG is for unstructured text only. Each agent speaks the native language of its data source.
+  </div>
+
+</div>
+
+<!-- ==================== SOURCE DESCRIPTIONS ==================== -->
+<div class="panel" id="panel-sources">
+
+  <h2 style="text-align:center; color:#e2e8f0; margin-bottom:8px; font-size:1.2rem">How Does the LLM Know Which Source to Use?</h2>
+  <p style="text-align:center; color:#94a3b8; font-size:0.9rem; margin-bottom:24px">You give it <strong>descriptions</strong> of each source: what data it holds, what schema it has, what the columns mean.</p>
+
+  <div class="source-desc-grid">
+    <div class="source-desc-card sql-color">
+      <h4><div class="sdc-icon" style="background:#60a5fa;color:#0f172a">SQL</div> <span style="color:#60a5fa">SQL Source</span></h4>
+      <ul>
+        <li>Type: PostgreSQL</li>
+        <li>Tables: customers, orders, invoices</li>
+        <li>customers: id, name, email, city</li>
+        <li>orders: id, customer_id, amount, date</li>
+        <li>"city" = orasul clientului</li>
+      </ul>
+    </div>
+    <div class="source-desc-card nosql-color">
+      <h4><div class="sdc-icon" style="background:#fb923c;color:#0f172a">NoS</div> <span style="color:#fb923c">NoSQL Source</span></h4>
+      <ul>
+        <li>Type: MongoDB</li>
+        <li>Collections: locations, reviews</li>
+        <li>locations: address, city, geo_coords</li>
+        <li>reviews: customer_id, text, rating, date</li>
+        <li>"rating" = 1-5, sub 3 = negativ</li>
+      </ul>
+    </div>
+    <div class="source-desc-card csv-color">
+      <h4><div class="sdc-icon" style="background:#34d399;color:#0f172a">CSV</div> <span style="color:#34d399">CSV Source</span></h4>
+      <ul>
+        <li>Type: CSV files</li>
+        <li>Files: monthly_report.csv, sales.csv</li>
+        <li>Columns: region, revenue, month</li>
+        <li>"region" = cod judet/oras</li>
+        <li>Updated monthly</li>
+      </ul>
+    </div>
+    <div class="source-desc-card rag-color">
+      <h4><div class="sdc-icon" style="background:#a78bfa;color:#0f172a">RAG</div> <span style="color:#a78bfa">RAG Source</span></h4>
+      <ul>
+        <li>Type: pgvector + HNSW</li>
+        <li>Content: contracts, policies, legal docs</li>
+        <li>Metadata: doc_type, date, parties</li>
+        <li>Unstructured text, not queryable via SQL</li>
+        <li>Search by semantic similarity</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout callout-pink" style="margin-top:24px">
+    <strong>This is what Richard meant by "expui sursele".</strong> The LLM sees these descriptions and can match a user's question to the right source. "Clienti din Bucuresti" &rarr; SQL (customers.city) or NoSQL (locations.city). "Review-uri negative" &rarr; NoSQL (reviews.rating). "Clauze de confidentialitate" &rarr; RAG (contract text).
+  </div>
+
+  <h3 style="color:#e2e8f0; margin-top:30px; margin-bottom:12px; font-size:1rem">How the LLM decides in practice</h3>
+  <div class="data-block">
+    <span class="comment"># The source descriptions become part of the system prompt</span><br><br>
+    system_prompt = <span class="str">"""You have access to these data sources:</span><br><br>
+    <span class="str">1. SQL (PostgreSQL): customers, orders, invoices</span><br>
+    <span class="str">&nbsp;&nbsp;&nbsp;- customers: id, name, email, city</span><br>
+    <span class="str">&nbsp;&nbsp;&nbsp;- orders: id, customer_id, amount, date</span><br><br>
+    <span class="str">2. NoSQL (MongoDB): locations, reviews</span><br>
+    <span class="str">&nbsp;&nbsp;&nbsp;- reviews: customer_id, text, rating (1-5), date</span><br><br>
+    <span class="str">3. RAG: contracts, policies (unstructured text)</span><br><br>
+    <span class="str">For each question, decide which source(s) to query.</span><br>
+    <span class="str">You can query multiple sources if needed."""</span><br><br>
+    <span class="comment"># The LLM reads this and routes accordingly</span>
+  </div>
+
+</div>
+
+<!-- ==================== LIVE EXAMPLE ==================== -->
+<div class="panel" id="panel-example">
+
+  <div class="example-question">
+    <div class="q-label">User asks</div>
+    <div class="q-text">"Care sunt clientii cu review-uri negative din Bucuresti?"</div>
+  </div>
+
+  <button class="play-btn" onclick="playExample()">Play step by step</button>
+
+  <div class="routing-steps" id="routing-steps">
+
+    <div class="routing-step" id="step-1">
+      <div class="step-num" style="background:rgba(244,114,182,0.2);color:#f472b6">1</div>
+      <div class="step-content">
+        <div class="step-title" style="color:#f472b6">Router / LLM analyzes the question</div>
+        <div class="step-detail">The LLM reads the source descriptions and identifies: "clienti" &rarr; SQL (customers table), "review-uri negative" &rarr; NoSQL (reviews collection), "Bucuresti" &rarr; could be SQL (customers.city) or NoSQL (locations.city)</div>
+        <div class="step-code">
+          Decision: call <span style="color:#60a5fa">SQL Agent</span> + <span style="color:#fb923c">NoSQL Agent</span><br>
+          Skip: CSV Agent (no relevant data), RAG Agent (not about documents)
+        </div>
+      </div>
+    </div>
+
+    <div class="routing-step" id="step-2">
+      <div class="step-num" style="background:rgba(96,165,250,0.2);color:#60a5fa">2</div>
+      <div class="step-content">
+        <div class="step-title" style="color:#60a5fa">SQL Agent queries PostgreSQL</div>
+        <div class="step-detail">Converts the natural language request into a SQL query for the customers table.</div>
+        <div class="step-code">
+          <span style="color:#60a5fa">SELECT</span> id, name, email<br>
+          <span style="color:#60a5fa">FROM</span> customers<br>
+          <span style="color:#60a5fa">WHERE</span> city = <span style="color:#34d399">'Bucuresti'</span><br><br>
+          <span style="color:#64748b">-- Returns: [{id: 12, name: "Ion Popescu"}, {id: 45, name: "Maria Ionescu"}, ...]</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="routing-step" id="step-3">
+      <div class="step-num" style="background:rgba(251,146,60,0.2);color:#fb923c">3</div>
+      <div class="step-content">
+        <div class="step-title" style="color:#fb923c">NoSQL Agent queries MongoDB</div>
+        <div class="step-detail">Finds reviews with low ratings for customers from Bucuresti.</div>
+        <div class="step-code">
+          db.reviews.<span style="color:#fb923c">find</span>({<br>
+          &nbsp;&nbsp;customer_id: { <span style="color:#fb923c">$in</span>: [12, 45, ...] },<br>
+          &nbsp;&nbsp;rating: { <span style="color:#fb923c">$lt</span>: <span style="color:#fb923c">3</span> }<br>
+          })<br><br>
+          <span style="color:#64748b">// Returns: [{customer_id: 12, text: "Livrare intarziata", rating: 1}, ...]</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="routing-step" id="step-4">
+      <div class="step-num" style="background:rgba(250,204,21,0.2);color:#facc15">4</div>
+      <div class="step-content">
+        <div class="step-title" style="color:#facc15">Aggregate results</div>
+        <div class="step-detail">The LLM combines data from both sources to form a complete answer.</div>
+        <div class="step-code">
+          <span style="color:#64748b"># SQL gave us:</span> customers in Bucuresti<br>
+          <span style="color:#64748b"># NoSQL gave us:</span> their negative reviews<br>
+          <span style="color:#64748b"># LLM combines:</span><br><br>
+          "Clientii din Bucuresti cu review-uri negative sunt:<br>
+          &nbsp;- Ion Popescu (rating 1): 'Livrare intarziata'<br>
+          &nbsp;- Maria Ionescu (rating 2): 'Produs deteriorat'"
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="callout callout-yellow" style="margin-top:24px">
+    <strong>Notice:</strong> The RAG and CSV agents were <strong>not called</strong> for this question &mdash; they had no relevant data. The router only activates the agents it needs. Different questions will activate different combinations.
+  </div>
+
+</div>
+
+<!-- ==================== WHERE RAG FITS ==================== -->
+<div class="panel" id="panel-rag-role">
+
+  <h2 style="text-align:center; color:#e2e8f0; margin-bottom:8px; font-size:1.2rem">RAG Is One Source, Not a Replacement for Everything</h2>
+  <p style="text-align:center; color:#94a3b8; font-size:0.9rem; margin-bottom:24px">Richard's key point: don't force all data into RAG. Use the right mechanism for each data type.</p>
+
+  <table class="cmp-table">
+    <thead>
+      <tr>
+        <th style="color:#e2e8f0">Data Type</th>
+        <th style="color:#e2e8f0">Mechanism</th>
+        <th style="color:#e2e8f0">Why not RAG?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="color:#60a5fa">Relational data (customers, orders)</td>
+        <td style="color:#60a5fa">SQL</td>
+        <td style="color:#94a3b8">Already structured. SQL is precise &mdash; exact filters, joins, aggregations. RAG would lose that precision.</td>
+      </tr>
+      <tr>
+        <td style="color:#fb923c">Flexible documents (reviews, profiles)</td>
+        <td style="color:#fb923c">NoSQL</td>
+        <td style="color:#94a3b8">Already structured (JSON documents). You can query fields directly. No need for semantic search.</td>
+      </tr>
+      <tr>
+        <td style="color:#34d399">Tabular files (reports, exports)</td>
+        <td style="color:#34d399">CSV / pandas</td>
+        <td style="color:#94a3b8">Columns and rows. Filter and aggregate directly. RAG can't do SUM() or GROUP BY.</td>
+      </tr>
+      <tr>
+        <td style="color:#a78bfa">Unstructured text (contracts, policies)</td>
+        <td style="color:#a78bfa">RAG</td>
+        <td style="color:#94a3b8">This IS where RAG shines &mdash; text has no schema, can't be queried with SQL. Semantic search is the only option.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-purple" style="margin-top:24px">
+    <strong>Richard's rule:</strong> "SQL-ul ramane in SQL. NoSQL-ul ramane in NoSQL, pentru ca deja este informatie structurata. Textul nestructurat il pui in RAG."
+  </div>
+
+  <h3 style="color:#e2e8f0; margin-top:30px; margin-bottom:12px; font-size:1rem">Multiple RAG Indexes for Different Document Types</h3>
+  <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:12px">If your documents are separable by type, Richard recommends a separate pgvector index for each:</p>
+
+  <div class="rag-indexes">
+    <div class="rag-index-card">
+      <div class="ric-name">contracts_chunks</div>
+      <div class="ric-desc">Contract clauses, terms, parties, penalties</div>
+    </div>
+    <div class="rag-index-card">
+      <div class="ric-name">invoices_chunks</div>
+      <div class="ric-desc">Invoice details, amounts, line items</div>
+    </div>
+    <div class="rag-index-card">
+      <div class="ric-name">medical_chunks</div>
+      <div class="ric-desc">Medical documents, diagnoses, treatments</div>
+    </div>
+    <div class="rag-index-card">
+      <div class="ric-name">policies_chunks</div>
+      <div class="ric-desc">Company policies, HR rules, guidelines</div>
+    </div>
+  </div>
+
+  <div class="callout callout-green" style="margin-top:16px">
+    <strong>Why separate?</strong> Each index has its own HNSW graph. Searching contracts doesn't waste time comparing against medical documents. Better precision, faster search. Same principle as hybrid search &mdash; filter first, then search.
+  </div>
+
+</div>
+
+<!-- ==================== LANGGRAPH ==================== -->
+<div class="panel" id="panel-langgraph">
+
+  <h2 style="text-align:center; color:#e2e8f0; margin-bottom:8px; font-size:1.2rem">LangGraph Implementation (Lectia 5, Slide 17)</h2>
+  <p style="text-align:center; color:#94a3b8; font-size:0.9rem; margin-bottom:24px">The same multi-source pattern implemented as a LangGraph state machine with routing.</p>
+
+  <div class="arch-container">
+
+    <div class="arch-box user-color" style="width:100%;max-width:500px">
+      <h3>User Question</h3>
+      <p>"Care sunt clientii cu review-uri negative?"</p>
+    </div>
+
+    <div class="arch-arrow"><div class="line"></div><div class="tip"></div></div>
+
+    <div class="arch-box router-color" style="width:100%;max-width:500px">
+      <h3>route_to_source()</h3>
+      <p>LLM node decides which branch to take: <code style="color:#f472b6">rag</code>, <code style="color:#f472b6">csv</code>, or <code style="color:#f472b6">sql</code></p>
+    </div>
+
+    <svg class="branch-svg" viewBox="0 0 900 60" preserveAspectRatio="xMidYMid meet">
+      <line x1="450" y1="0" x2="150" y2="55" stroke="#a78bfa" stroke-width="2" opacity="0.5"/>
+      <line x1="450" y1="0" x2="450" y2="55" stroke="#34d399" stroke-width="2" opacity="0.5"/>
+      <line x1="450" y1="0" x2="750" y2="55" stroke="#60a5fa" stroke-width="2" opacity="0.5"/>
+      <circle cx="150" cy="55" r="4" fill="#a78bfa"/>
+      <circle cx="450" cy="55" r="4" fill="#34d399"/>
+      <circle cx="750" cy="55" r="4" fill="#60a5fa"/>
+    </svg>
+
+    <div class="agents-row" style="max-width:800px">
+      <div class="agent-card rag-color" style="max-width:220px">
+        <div class="agent-name">gen_rag_query</div>
+        <div class="agent-desc">Embed question, search pgvector, return relevant chunks</div>
+      </div>
+      <div class="agent-card csv-color" style="max-width:220px">
+        <div class="agent-name">gen_csv_query</div>
+        <div class="agent-desc">Generate pandas filter/aggregation on CSV data</div>
+      </div>
+      <div class="agent-card sql-color" style="max-width:220px">
+        <div class="agent-name">gen_sql_query</div>
+        <div class="agent-desc">Generate SQL query for PostgreSQL tables</div>
+      </div>
+    </div>
+
+    <svg class="branch-svg" viewBox="0 0 900 60" preserveAspectRatio="xMidYMid meet">
+      <line x1="150" y1="5" x2="450" y2="55" stroke="#a78bfa" stroke-width="2" opacity="0.4"/>
+      <line x1="450" y1="5" x2="450" y2="55" stroke="#34d399" stroke-width="2" opacity="0.4"/>
+      <line x1="750" y1="5" x2="450" y2="55" stroke="#60a5fa" stroke-width="2" opacity="0.4"/>
+      <circle cx="450" cy="55" r="5" fill="#facc15"/>
+    </svg>
+
+    <div class="arch-box aggregate-color" style="width:100%;max-width:500px">
+      <h3>Format Response</h3>
+      <p>Combine results, LLM generates final answer</p>
+    </div>
+  </div>
+
+  <div class="data-block" style="margin-top:24px">
+    <span class="comment"># LangGraph pattern (Lectia 5, slide 17)</span><br><br>
+    <span class="key">def</span> <span class="highlight">route_to_source</span>(state):<br>
+    &nbsp;&nbsp;<span class="comment"># LLM decides which branch based on the question</span><br>
+    &nbsp;&nbsp;source = llm.decide(state.question, available_sources)<br>
+    &nbsp;&nbsp;<span class="key">return</span> source  <span class="comment"># "rag", "csv", or "sql"</span><br><br>
+
+    graph.add_node(<span class="str">"router"</span>, route_to_source)<br>
+    graph.add_node(<span class="str">"gen_rag_query"</span>, rag_handler)<br>
+    graph.add_node(<span class="str">"gen_csv_query"</span>, csv_handler)<br>
+    graph.add_node(<span class="str">"gen_sql_query"</span>, sql_handler)<br><br>
+
+    <span class="comment"># Conditional edges: router → one of the three branches</span><br>
+    graph.add_conditional_edges(<span class="str">"router"</span>, route_to_source, {<br>
+    &nbsp;&nbsp;<span class="str">"rag"</span>: <span class="str">"gen_rag_query"</span>,<br>
+    &nbsp;&nbsp;<span class="str">"csv"</span>: <span class="str">"gen_csv_query"</span>,<br>
+    &nbsp;&nbsp;<span class="str">"sql"</span>: <span class="str">"gen_sql_query"</span>,<br>
+    })
+  </div>
+
+  <div class="callout callout-pink" style="margin-top:20px">
+    <strong>Same architecture, different implementation.</strong> The multi-source pattern from Lectia 4 becomes concrete in LangGraph (Lectia 5) as nodes + conditional edges. The router node picks the branch, each branch generates a query in the right format.
+  </div>
+
+</div>
+
+<script>
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+let examplePlaying = false;
+function playExample() {
+  if (examplePlaying) return;
+  examplePlaying = true;
+
+  const steps = document.querySelectorAll('.routing-step');
+  steps.forEach(s => s.classList.remove('visible'));
+
+  steps.forEach((step, i) => {
+    setTimeout(() => {
+      step.classList.add('visible');
+      step.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      if (i === steps.length - 1) {
+        examplePlaying = false;
+      }
+    }, (i + 1) * 1200);
+  });
+}
+</script>
+
+</body>
+</html>

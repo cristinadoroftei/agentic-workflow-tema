@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skillab - Session 2: Pipelines, Tool Use & Cloud Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.6; }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  h1 { text-align: center; font-size: 2rem; margin: 30px 0 10px; color: #f8fafc; }
+  .subtitle { text-align: center; color: #94a3b8; margin-bottom: 40px; font-size: 1.05rem; }
+
+  /* Navigation */
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 40px; position: sticky; top: 0; background: #0f1117; padding: 15px 0; z-index: 10; border-bottom: 1px solid #1e293b; }
+  .nav a { padding: 8px 18px; background: #1e293b; color: #94a3b8; border-radius: 8px; text-decoration: none; font-size: 0.9rem; transition: all 0.2s; }
+  .nav a:hover, .nav a.active { background: #334155; color: #f1f5f9; }
+
+  /* Section */
+  .section { margin-bottom: 60px; scroll-margin-top: 80px; }
+  .section-title { font-size: 1.5rem; color: #f8fafc; margin-bottom: 8px; padding-bottom: 12px; border-bottom: 2px solid #334155; }
+  .section-desc { color: #94a3b8; margin-bottom: 24px; font-size: 0.95rem; }
+
+  /* Pipeline diagrams */
+  .pipeline { display: flex; align-items: center; gap: 0; margin: 20px 0; flex-wrap: wrap; justify-content: center; }
+  .pipe-step { padding: 16px 22px; border-radius: 12px; text-align: center; min-width: 140px; }
+  .pipe-step .step-num { font-size: 0.75rem; font-weight: 700; margin-bottom: 4px; opacity: 0.7; }
+  .pipe-step .step-name { font-size: 1.05rem; font-weight: 700; }
+  .pipe-step .step-detail { font-size: 0.78rem; margin-top: 4px; opacity: 0.85; }
+  .pipe-arrow { font-size: 1.4rem; color: #475569; padding: 0 4px; }
+
+  .pipe-extract { background: #1a2332; border: 2px solid #3b82f6; color: #93c5fd; }
+  .pipe-rag { background: #1a2e1a; border: 2px solid #22c55e; color: #86efac; }
+  .pipe-shared { background: #2a1f33; border: 2px solid #a855f7; color: #d8b4fe; }
+  .pipe-neutral { background: #1e293b; border: 2px solid #475569; color: #cbd5e1; }
+
+  /* Comparison table */
+  .compare-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  .compare-table th { background: #1e293b; padding: 12px 16px; text-align: left; font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+  .compare-table td { padding: 12px 16px; border-bottom: 1px solid #1e293b; font-size: 0.9rem; }
+  .compare-table tr:hover td { background: #1e293b44; }
+  .col-extract { color: #93c5fd; }
+  .col-rag { color: #86efac; }
+
+  /* Code blocks */
+  .code-block { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 0.82rem; overflow-x: auto; line-height: 1.7; }
+  .code-block .comment { color: #6b7280; }
+  .code-block .keyword { color: #c084fc; }
+  .code-block .string { color: #86efac; }
+  .code-block .func { color: #93c5fd; }
+  .code-block .type { color: #fbbf24; }
+  .code-block .param { color: #fb923c; }
+
+  /* Info cards */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin: 20px 0; }
+  .card { background: #1e293b; border-radius: 12px; padding: 20px; border-left: 4px solid #475569; }
+  .card h3 { font-size: 1rem; margin-bottom: 8px; }
+  .card p, .card ul { font-size: 0.88rem; color: #94a3b8; }
+  .card ul { padding-left: 18px; }
+  .card ul li { margin: 4px 0; }
+  .card-blue { border-left-color: #3b82f6; }
+  .card-green { border-left-color: #22c55e; }
+  .card-purple { border-left-color: #a855f7; }
+  .card-amber { border-left-color: #f59e0b; }
+  .card-red { border-left-color: #ef4444; }
+
+  /* Flow diagram for cloud architecture */
+  .flow-vertical { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 20px 0; }
+  .flow-box { padding: 14px 28px; border-radius: 10px; text-align: center; min-width: 320px; max-width: 500px; }
+  .flow-box .flow-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; margin-bottom: 2px; }
+  .flow-box .flow-main { font-weight: 700; font-size: 1rem; }
+  .flow-box .flow-sub { font-size: 0.8rem; opacity: 0.75; margin-top: 2px; }
+  .flow-arrow-down { font-size: 1.3rem; color: #475569; padding: 4px 0; }
+
+  .flow-s3 { background: #1a2332; border: 2px solid #f59e0b; color: #fcd34d; }
+  .flow-pipeline { background: #1a2332; border: 2px solid #3b82f6; color: #93c5fd; }
+  .flow-watcher { background: #1a2e1a; border: 2px solid #22c55e; color: #86efac; }
+  .flow-db { background: #2a1f33; border: 2px solid #a855f7; color: #d8b4fe; }
+  .flow-app { background: #1e293b; border: 2px solid #e2e8f0; color: #f1f5f9; }
+
+  /* Highlight box */
+  .highlight { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 18px 22px; margin: 16px 0; }
+  .highlight-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 6px; }
+  .highlight p { font-size: 0.88rem; color: #94a3b8; }
+
+  .key-insight { background: linear-gradient(135deg, #1a2332, #1a2e1a); border: 1px solid #334155; border-radius: 12px; padding: 20px 24px; margin: 20px 0; }
+  .key-insight .label { font-size: 0.75rem; color: #f59e0b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+
+  /* Tool chain diagram */
+  .tool-chain { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 20px auto; max-width: 600px; }
+  .tool-box { width: 100%; padding: 14px 20px; border-radius: 10px; }
+  .tool-box .actor { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; opacity: 0.5; }
+  .tool-box .action { font-weight: 600; font-size: 0.95rem; }
+  .tool-box .detail { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
+  .tool-user { background: #1e293b; border: 2px solid #e2e8f0; color: #f1f5f9; }
+  .tool-llm { background: #1a2332; border: 2px solid #3b82f6; color: #93c5fd; }
+  .tool-code { background: #1a2e1a; border: 2px solid #22c55e; color: #86efac; }
+  .tool-db { background: #2a1f33; border: 2px solid #a855f7; color: #d8b4fe; }
+
+  /* JSON block */
+  .json-block { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.7; overflow-x: auto; }
+  .json-key { color: #93c5fd; }
+  .json-str { color: #86efac; }
+  .json-num { color: #fbbf24; }
+  .json-comment { color: #6b7280; }
+
+  /* Bug callout */
+  .bug-box { background: #2a1a1a; border: 1px solid #7f1d1d; border-radius: 10px; padding: 16px 20px; margin: 16px 0; }
+  .bug-box .bug-title { color: #fca5a5; font-weight: 700; margin-bottom: 6px; }
+  .bug-box p { font-size: 0.88rem; color: #d4a0a0; }
+  .bug-box code { background: #1a1111; padding: 2px 6px; border-radius: 4px; font-size: 0.82rem; color: #fca5a5; }
+
+  .separator { border: none; border-top: 1px solid #1e293b; margin: 40px 0; }
+
+  /* File reference */
+  .file-ref { font-family: monospace; font-size: 0.8rem; color: #64748b; background: #1e293b; padding: 2px 8px; border-radius: 4px; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .pipeline { flex-direction: column; }
+    .pipe-arrow { transform: rotate(90deg); }
+    .card-grid { grid-template-columns: 1fr; }
+    .flow-box { min-width: unset; width: 90%; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Skillab Lectia 3 & 4 -- Session 2</h1>
+<p class="subtitle">Extraction Pipeline vs RAG Pipeline, Tool Use, Batch Processing & Cloud Architecture</p>
+
+<nav class="nav">
+  <a href="#two-pipelines">Two Pipelines</a>
+  <a href="#extraction-pipeline">Extraction</a>
+  <a href="#rag-pipeline">RAG</a>
+  <a href="#json-output">JSON Output</a>
+  <a href="#how-they-connect">How They Connect</a>
+  <a href="#tool-use">Tool Use</a>
+  <a href="#hybrid-search">Hybrid Search</a>
+  <a href="#batch">Batch Processing</a>
+  <a href="#cloud">Cloud Architecture</a>
+  <a href="#db-flow">How Data Enters PostgreSQL</a>
+  <a href="#chunking-roles">Chunking: Two Different Roles</a>
+</nav>
+
+<!-- ============================================================ -->
+<!-- SECTION 1: TWO PIPELINES -->
+<!-- ============================================================ -->
+<div class="section" id="two-pipelines">
+  <h2 class="section-title">Two Separate Pipelines</h2>
+  <p class="section-desc">Lectia 3 and 4 teach two distinct pipelines that solve different problems but complement each other.</p>
+
+  <div class="card-grid">
+    <div class="card card-blue">
+      <h3 class="col-extract">Pipeline 1: Structured Extraction (Lectia 3)</h3>
+      <p>Turn messy documents into clean, typed JSON using an LLM + Pydantic schemas.</p>
+      <ul>
+        <li>Input: PDF, DOCX, TXT, CSV</li>
+        <li>Output: JSON files (factura.json, contract.json)</li>
+        <li>Uses: Gemini + Pydantic <code>response_schema</code></li>
+      </ul>
+    </div>
+    <div class="card card-green">
+      <h3 class="col-rag">Pipeline 2: RAG with Embeddings (Lectia 4)</h3>
+      <p>Enable semantic search over document content using vector embeddings + pgvector.</p>
+      <ul>
+        <li>Input: PDF, DOCX, TXT</li>
+        <li>Output: Chunks + embeddings in PostgreSQL</li>
+        <li>Uses: SentenceTransformers + pgvector + HNSW</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Extraction pipeline -->
+  <h3 style="color:#93c5fd; margin: 24px 0 8px;">Pipeline 1: Extraction</h3>
+  <div class="pipeline">
+    <div class="pipe-step pipe-extract">
+      <div class="step-num">STEP 1</div>
+      <div class="step-name">LOAD</div>
+      <div class="step-detail">PyPDFLoader, Docx2txt</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-extract">
+      <div class="step-num">STEP 2</div>
+      <div class="step-name">CHUNK</div>
+      <div class="step-detail">daca e mare</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-extract" style="border-color:#f59e0b; color:#fcd34d;">
+      <div class="step-num">STEP 3</div>
+      <div class="step-name">EXTRACT</div>
+      <div class="step-detail">LLM + Pydantic schema</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-extract">
+      <div class="step-num">STEP 4</div>
+      <div class="step-name">SAVE</div>
+      <div class="step-detail">JSON files</div>
+    </div>
+  </div>
+
+  <!-- RAG pipeline -->
+  <h3 style="color:#86efac; margin: 24px 0 8px;">Pipeline 2: RAG</h3>
+  <div class="pipeline">
+    <div class="pipe-step pipe-rag">
+      <div class="step-num">STEP 1</div>
+      <div class="step-name">LOAD</div>
+      <div class="step-detail">Document loaders</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-rag">
+      <div class="step-num">STEP 2</div>
+      <div class="step-name">CHUNK</div>
+      <div class="step-detail">RecursiveCharTextSplitter</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-rag" style="border-color:#f59e0b; color:#fcd34d;">
+      <div class="step-num">STEP 3</div>
+      <div class="step-name">EMBED</div>
+      <div class="step-detail">SentenceTransformer (384d)</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-rag">
+      <div class="step-num">STEP 4</div>
+      <div class="step-name">SAVE</div>
+      <div class="step-detail">pgvector + HNSW index</div>
+    </div>
+  </div>
+
+  <div class="key-insight">
+    <div class="label">Key difference at Step 3</div>
+    <p><strong>Extraction:</strong> LLM reads the text and fills in a Pydantic schema (structured fields).<br>
+    <strong>RAG:</strong> Embedding model converts text into a vector (semantic meaning). No LLM involved at indexing time.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 2: EXTRACTION PIPELINE DETAILS -->
+<!-- ============================================================ -->
+<div class="section" id="extraction-pipeline">
+  <h2 class="section-title">Extraction Pipeline -- Why Chunk Before Extract?</h2>
+  <p class="section-desc">The LLM does the extraction. Chunking prepares the text so the LLM can handle it.</p>
+
+  <div class="card-grid">
+    <div class="card card-amber">
+      <h3>LLM context window limit</h3>
+      <p>A 50,000-char report can exceed the LLM's input limit. Chunks keep it within bounds. Short documents (invoices ~2000 chars) skip chunking entirely.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>Better extraction quality</h3>
+      <p>Smaller, focused text = more precise extraction. The LLM doesn't get lost in irrelevant sections when extracting specific fields.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>Can't split after extracting</h3>
+      <p>After extraction you have a Pydantic object (Python object with fields). You can only split <em>text</em>. So chunking must come first.</p>
+    </div>
+  </div>
+
+  <p style="color:#94a3b8; margin-top: 16px;">The slide says <strong>"Text splitters (daca e mare)"</strong> -- chunking is conditional. See <span class="file-ref">slide43.py</span>:</p>
+
+  <div class="code-block">
+<span class="keyword">def</span> <span class="func">should_chunk</span>(document, max_size=<span class="type">4000</span>):
+    <span class="keyword">return</span> len(document.page_content) > max_size
+
+<span class="comment"># Invoice (~2,000 chars)  -> process directly, no chunking</span>
+<span class="comment"># Contract (~8,000 chars) -> chunk</span>
+<span class="comment"># Report (50,000+ chars)  -> chunk</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 3: RAG PIPELINE -->
+<!-- ============================================================ -->
+<div class="section" id="rag-pipeline">
+  <h2 class="section-title">RAG Pipeline -- Why Chunk Before Embed?</h2>
+  <p class="section-desc">Similar reasons, but for embeddings instead of LLM extraction.</p>
+
+  <div class="card-grid">
+    <div class="card card-green">
+      <h3>Embedding models have token limits</h3>
+      <p>MiniLM: 512 tokens max. OpenAI: ~8k tokens. A full PDF exceeds this -- text gets truncated and you lose information.</p>
+    </div>
+    <div class="card card-green">
+      <h3>One embedding = one meaning</h3>
+      <p>Embedding an entire contract compresses penalties + payments + confidentiality into one blurred vector. Chunking keeps each embedding focused on one topic.</p>
+    </div>
+    <div class="card card-green">
+      <h3>Retrieval returns chunks, not docs</h3>
+      <p>RAG injects top-k chunks into the LLM prompt. Whole documents would overflow the context window and waste tokens on irrelevant sections.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 4: JSON OUTPUT -->
+<!-- ============================================================ -->
+<div class="section" id="json-output">
+  <h2 class="section-title">What the Saved JSON Looks Like</h2>
+  <p class="section-desc">After the extraction pipeline, each document becomes a clean JSON file.</p>
+
+  <div class="card-grid">
+    <div class="card card-blue" style="font-family: monospace; font-size: 0.82rem;">
+      <h3 style="font-family: 'Segoe UI', sans-serif;">factura.json</h3>
+      <div class="json-block" style="margin: 8px 0 0 0; border: none; padding: 12px;">
+{<br>
+&nbsp;&nbsp;<span class="json-key">"numar"</span>: <span class="json-str">"2024-001"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"data"</span>: <span class="json-str">"2024-02-15"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"client"</span>: <span class="json-str">"SC ClientCorp SA"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"furnizor"</span>: <span class="json-str">"SC FurnizorTech SRL"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"total"</span>: <span class="json-num">9520.0</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"produse"</span>: [<span class="json-str">"Laptop Dell"</span>, <span class="json-str">"Mouse wireless"</span>]<br>
+}
+      </div>
+    </div>
+    <div class="card card-blue" style="font-family: monospace; font-size: 0.82rem;">
+      <h3 style="font-family: 'Segoe UI', sans-serif;">contract.json</h3>
+      <div class="json-block" style="margin: 8px 0 0 0; border: none; padding: 12px;">
+{<br>
+&nbsp;&nbsp;<span class="json-key">"numar"</span>: <span class="json-str">"C-2024-042"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"prestator"</span>: <span class="json-str">"SC TechDev SRL"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"beneficiar"</span>: <span class="json-str">"SC ClientCorp SA"</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"valoare"</span>: <span class="json-num">45000.0</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"durata_luni"</span>: <span class="json-num">12</span>,<br>
+&nbsp;&nbsp;<span class="json-key">"obligatii_prestator"</span>: [<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-str">"Dezvoltare aplicatie web"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-str">"Mentenanta 6 luni"</span><br>
+&nbsp;&nbsp;]<br>
+}
+      </div>
+    </div>
+  </div>
+
+  <div class="highlight">
+    <div class="highlight-title">Pydantic guarantees the shape</div>
+    <p>Every invoice JSON has the same fields, same types, validated automatically. The <code>Field(description=...)</code> guides the LLM on what to extract. If validation fails, the code retries (see <span class="file-ref">slide38.py</span>).</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 5: HOW THEY CONNECT -->
+<!-- ============================================================ -->
+<div class="section" id="how-they-connect">
+  <h2 class="section-title">How Both Pipelines Work Together</h2>
+  <p class="section-desc">Extraction gives you structure. RAG gives you understanding. Together, you get both.</p>
+
+  <table class="compare-table">
+    <tr>
+      <th>Question Type</th>
+      <th class="col-extract">Extraction Only</th>
+      <th class="col-rag">RAG Only</th>
+      <th style="color: #d8b4fe;">Both Together</th>
+    </tr>
+    <tr>
+      <td>"Invoice total?"</td>
+      <td class="col-extract">invoice.total -- instant</td>
+      <td class="col-rag">Overkill</td>
+      <td>--</td>
+    </tr>
+    <tr>
+      <td>"What about penalties?"</td>
+      <td class="col-extract">Can't answer (no field for this)</td>
+      <td class="col-rag">Works -- searches all docs</td>
+      <td>--</td>
+    </tr>
+    <tr>
+      <td style="font-weight:600;">"Penalties in TechDev contracts?"</td>
+      <td class="col-extract">Can't answer</td>
+      <td class="col-rag">Searches ALL docs (noisy)</td>
+      <td style="color: #d8b4fe; font-weight: 600;">Filter by prestator, then semantic search (precise)</td>
+    </tr>
+    <tr>
+      <td>"Dashboard / reports"</td>
+      <td class="col-extract">SQL on JSONB -- works great</td>
+      <td class="col-rag">Can't do this</td>
+      <td>--</td>
+    </tr>
+  </table>
+
+  <div class="key-insight">
+    <div class="label">Where the extracted data lives in the database</div>
+    <p>The extracted JSON goes into the <code>documents.metadata</code> column (JSONB type in PostgreSQL, from <span class="file-ref">slide13.py</span>). This makes it queryable with SQL: <code>WHERE metadata->>'prestator' = 'TechDev'</code>. The RAG chunks go into the separate <code>document_chunks</code> table with the <code>embedding</code> vector column.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 6: TOOL USE -->
+<!-- ============================================================ -->
+<div class="section" id="tool-use">
+  <h2 class="section-title">How the LLM Knows Which Query to Run</h2>
+  <p class="section-desc">The LLM never writes SQL or SQLAlchemy. It uses tool calling / function calling.</p>
+
+  <div class="tool-chain">
+    <div class="tool-box tool-user">
+      <div class="actor">User</div>
+      <div class="action">"Ce spun contractele cu TechDev despre penalitati?"</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-llm">
+      <div class="actor">LLM sees tool descriptions + Pydantic Field descriptions</div>
+      <div class="action">Fills in tool parameters:</div>
+      <div class="detail">{ query: "penalitati", prestator: "SC TechDev SRL" }</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-code">
+      <div class="actor">Your Python code (tool implementation)</div>
+      <div class="action">1. JSONB filter: filter_by_metadata("prestator", "TechDev")</div>
+      <div class="detail">2. Pass doc_ids into semantic search</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-db">
+      <div class="actor">PostgreSQL</div>
+      <div class="action">WHERE document_id IN (...) ORDER BY embedding &lt;=&gt; query_emb</div>
+      <div class="detail">HNSW traversal only within filtered documents</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-llm">
+      <div class="actor">LLM receives chunks as context</div>
+      <div class="action">Generates answer based on relevant chunks only</div>
+    </div>
+  </div>
+
+  <div class="highlight">
+    <div class="highlight-title">The tool definition is what the LLM sees</div>
+    <p>The <code>Field(description=...)</code> on each parameter tells the LLM what to fill in. The same Pydantic pattern from Lectia 3 (extraction schemas) is reused for tool parameters. The LLM's only job is understanding user intent and mapping it to parameters.</p>
+  </div>
+
+  <div class="code-block">
+<span class="keyword">class</span> <span class="type">SearchDocumentsParams</span>(BaseModel):
+    <span class="param">query</span>: str = Field(<span class="param">description</span>=<span class="string">"Semantic search query"</span>)
+    <span class="param">prestator</span>: str | None = Field(<span class="param">default</span>=None, <span class="param">description</span>=<span class="string">"Filter by prestator name"</span>)
+    <span class="param">doc_type</span>: str | None = Field(<span class="param">default</span>=None, <span class="param">description</span>=<span class="string">"Filter: invoice, contract, report"</span>)
+    <span class="param">min_valoare</span>: float | None = Field(<span class="param">default</span>=None, <span class="param">description</span>=<span class="string">"Minimum value in RON"</span>)
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 7: HYBRID SEARCH -->
+<!-- ============================================================ -->
+<div class="section" id="hybrid-search">
+  <h2 class="section-title">Hybrid Search: JSONB Filter + Vector Search</h2>
+  <p class="section-desc">The correct way: filter FIRST in SQL, THEN search only within filtered documents.</p>
+
+  <div class="card-grid">
+    <div class="card card-red">
+      <h3>WRONG: Filter after search</h3>
+      <p>Search all chunks globally (top_k=5), then filter by doc_ids. Problem: relevant TechDev chunks might not make it into the global top 5.</p>
+    </div>
+    <div class="card card-green">
+      <h3>CORRECT: Filter before search</h3>
+      <p>Add <code>WHERE document_id IN (...)</code> before the HNSW traversal. PostgreSQL searches only within TechDev's chunks. Top 5 are all relevant.</p>
+    </div>
+  </div>
+
+  <div class="code-block">
+<span class="keyword">def</span> <span class="func">similarity_search</span>(self, query_embedding, top_k=5, <span class="param">doc_ids</span>=None):
+    similarity = (1 - DocumentChunk.embedding.<span class="func">cosine_distance</span>(query_embedding)).<span class="func">label</span>(<span class="string">"score"</span>)
+
+    stmt = (
+        <span class="func">select</span>(DocumentChunk, similarity)
+        .options(<span class="func">joinedload</span>(DocumentChunk.document))
+        .order_by(DocumentChunk.embedding.<span class="func">cosine_distance</span>(query_embedding))
+        .limit(top_k)
+    )
+
+    <span class="comment"># Filter BEFORE vector search</span>
+    <span class="keyword">if</span> doc_ids <span class="keyword">is not</span> None:
+        stmt = stmt.<span class="func">where</span>(DocumentChunk.document_id.<span class="func">in_</span>(doc_ids))
+
+    rows = self.db.<span class="func">execute</span>(stmt).<span class="func">all</span>()
+    <span class="keyword">return</span> [(chunk, <span class="type">float</span>(score)) <span class="keyword">for</span> chunk, score <span class="keyword">in</span> rows]
+  </div>
+
+  <p style="color:#94a3b8; font-size:0.88rem; margin-top:8px;">The JSONB filter uses <span class="file-ref">slide22-2.py</span> <code>filter_by_metadata(key, value)</code>. The similarity search uses <span class="file-ref">slide57-2.py</span> <code>ChunkRepository</code>.</p>
+
+  <h3 style="color:#f8fafc; margin: 30px 0 12px;">How the pass from JSONB filter to vector search actually works</h3>
+  <p class="section-desc">The course teaches the two repositories separately (<span class="file-ref">slide22-2.py</span> and <span class="file-ref">slide57-2.py</span>) but leaves the wiring as an exercise. The tool function is where you connect them. Here's the full chain:</p>
+
+  <div class="card-grid" style="grid-template-columns: 1fr;">
+    <div class="card card-purple">
+      <h3>The existing course code (3 separate pieces)</h3>
+      <p><strong>DocumentRepository</strong> (<span class="file-ref">slide22-2.py</span>) -- queries the <code>documents</code> table JSONB column. Returns Document objects.<br>
+      <strong>ChunkRepository</strong> (<span class="file-ref">slide57-2.py</span>) -- queries the <code>document_chunks</code> table with vector search. Returns chunks + scores.<br>
+      <strong>RAGService</strong> (<span class="file-ref">slide58.py</span>) -- wraps ChunkRepository, handles embedding the query string.<br><br>
+      These exist independently. The course doesn't show them wired together -- that's the glue you'd write in the tool function.</p>
+    </div>
+  </div>
+
+  <div class="code-block">
+<span class="comment"># ──────────────────────────────────────────────────────</span>
+<span class="comment"># THE TOOL FUNCTION -- the glue that connects them</span>
+<span class="comment"># ──────────────────────────────────────────────────────</span>
+
+@<span class="func">register_tool</span>
+<span class="keyword">def</span> <span class="func">search_documents</span>(params: <span class="type">SearchDocumentsParams</span>) -> str:
+    <span class="string">"""Cauta documente folosind search semantic + filtre structurate."""</span>
+    <span class="keyword">with</span> <span class="func">transaction</span>() <span class="keyword">as</span> db:
+        doc_ids = <span class="keyword">None</span>
+
+        <span class="comment"># STEP 1: JSONB filter (slide22-2.py)</span>
+        <span class="keyword">if</span> params.prestator:
+            doc_repo = <span class="type">DocumentRepository</span>(db)
+            docs = doc_repo.<span class="func">filter_by_metadata</span>(<span class="string">"prestator"</span>, params.prestator)
+            <span class="comment"># docs = [Document(id=3, ...), Document(id=7, ...)]</span>
+
+            doc_ids = [d.id <span class="keyword">for</span> d <span class="keyword">in</span> docs]
+            <span class="comment"># doc_ids = [3, 7]    &lt;-- just a list of integers</span>
+
+        <span class="comment"># STEP 2: pass doc_ids into semantic search (slide57-2.py + slide58.py)</span>
+        rag = <span class="type">RAGService</span>(db)
+        results = rag.<span class="func">search</span>(params.query, top_k=<span class="type">5</span>, doc_ids=doc_ids)
+        <span class="comment"># internally: WHERE document_id IN (3, 7) ORDER BY embedding &lt;=&gt; query_emb</span>
+
+        <span class="keyword">return</span> <span class="string">"\n\n"</span>.join(
+            <span class="string">f"[{chunk.document.filename}] {chunk.content}"</span>
+            <span class="keyword">for</span> chunk, score <span class="keyword">in</span> results
+        )
+  </div>
+
+  <h3 style="color:#f8fafc; margin: 24px 0 12px;">The pass is just a list of integers</h3>
+
+  <div class="tool-chain">
+    <div class="tool-box tool-db" style="border-color:#3b82f6; color:#93c5fd;">
+      <div class="actor">Step 1: DocumentRepository.filter_by_metadata() -- queries documents table</div>
+      <div class="action">SELECT * FROM documents WHERE metadata->>'prestator' = 'SC TechDev SRL'</div>
+      <div class="detail">Returns: [Document(id=3, filename="techdev_contract.txt"), Document(id=7, filename="techdev_addendum.txt")]</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-code">
+      <div class="actor">The glue -- one line of Python</div>
+      <div class="action">doc_ids = [d.id for d in docs]</div>
+      <div class="detail">Result: [3, 7]</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-db">
+      <div class="actor">Step 2: ChunkRepository.similarity_search() -- queries document_chunks table</div>
+      <div class="action">SELECT * FROM document_chunks WHERE document_id IN (3, 7) ORDER BY embedding &lt;=&gt; query_emb LIMIT 5</div>
+      <div class="detail">Returns: top 5 most similar chunks, but ONLY from TechDev's documents</div>
+    </div>
+  </div>
+
+  <div class="highlight">
+    <div class="highlight-title">Two tables, two repositories, one list of IDs connecting them</div>
+    <p><code>filter_by_metadata</code> queries the <code>documents</code> table (where the extracted JSONB metadata lives). <code>similarity_search</code> queries the <code>document_chunks</code> table (where the RAG embeddings live). The connection is <code>doc_ids = [3, 7]</code> -- a plain Python list passed from one query to the next. That's all the "hybrid" is: one SQL query feeding IDs into another.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 8: BATCH PROCESSING -->
+<!-- ============================================================ -->
+<div class="section" id="batch">
+  <h2 class="section-title">Batch Processing</h2>
+  <p class="section-desc">Processing many documents in parallel using ProcessPoolExecutor. <span class="file-ref">slide49.py</span> + <span class="file-ref">slide50-2.py</span></p>
+
+  <div class="pipeline">
+    <div class="pipe-step pipe-neutral">
+      <div class="step-name">batch_extract()</div>
+      <div class="step-detail">orchestrator</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-neutral">
+      <div class="step-name">ProcessPoolExecutor</div>
+      <div class="step-detail">num_workers=4</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-extract">
+      <div class="step-name">_process_one()</div>
+      <div class="step-detail">per file, per worker</div>
+    </div>
+    <div class="pipe-arrow">--></div>
+    <div class="pipe-step pipe-extract">
+      <div class="step-name">ExtractionPipeline()</div>
+      <div class="step-detail">fresh per worker</div>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card card-blue">
+      <h3>Why module-level _process_one?</h3>
+      <p>Python's multiprocessing uses pickle to send functions to worker processes. Module-level functions are picklable; class methods are not. That's why <code>_process_one</code> is outside the class.</p>
+    </div>
+    <div class="card card-blue">
+      <h3>Why new pipeline per worker?</h3>
+      <p>The Gemini API client (<code>genai.Client()</code>) isn't picklable. Each worker creates its own client. The <code>@property</code> with lazy init ensures this happens only once per process.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>Continue-on-error</h3>
+      <p>Try/except wraps each file. A corrupt PDF doesn't kill the batch -- it goes into <code>results["errors"]</code> and processing continues for the rest.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>as_completed() order</h3>
+      <p>Results arrive in the order files <em>finish</em>, not the order they were submitted. A fast 1-page invoice returns before a slow 50-page contract.</p>
+    </div>
+  </div>
+
+  <div class="highlight">
+    <div class="highlight-title">The schema parameter makes it generic</div>
+    <p><code>schema: Type[BaseModel]</code> accepts any Pydantic class. Same <code>batch_extract()</code> works for Invoice, Contract, or any new document type -- just pass a different schema.</p>
+  </div>
+
+  <div class="bug-box">
+    <div class="bug-title">Note: slide50-2.py has issues (likely intentional simplifications)</div>
+    <p><code>text</code> variable is built on line 29/31 but never used. The loop on line 34 uses <code>chunks</code> which is undefined when <code>_should_chunk</code> returns False. Last line has typo: <code>respones</code> instead of <code>responses</code>. These are slide-level simplifications, not production code.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 9: CLOUD ARCHITECTURE -->
+<!-- ============================================================ -->
+<div class="section" id="cloud">
+  <h2 class="section-title">Cloud Architecture: S3, Watcher & Pipeline</h2>
+  <p class="section-desc">How the pipeline runs in production (from Lectia 3, ~min 49-59). The pipeline and the chat app are separate systems communicating through a shared storage location.</p>
+
+  <div class="flow-vertical">
+    <div class="flow-box flow-s3">
+      <div class="flow-label">Input</div>
+      <div class="flow-main">S3 Bucket -- Raw Documents</div>
+      <div class="flow-sub">New PDFs, DOCX, TXT uploaded here</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="flow-box flow-pipeline">
+      <div class="flow-label">Runs separately (Lambda, job, cron)</div>
+      <div class="flow-main">Processing Pipeline</div>
+      <div class="flow-sub">Load -> Chunk -> Extract/Embed -> Save output</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="flow-box flow-s3">
+      <div class="flow-label">Output</div>
+      <div class="flow-main">S3 Bucket -- Processed Data</div>
+      <div class="flow-sub">JSON files, chunks, labels, embeddings</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="flow-box flow-watcher">
+      <div class="flow-label">Detects new processed files</div>
+      <div class="flow-main">Watcher / Trigger / Cron Script</div>
+      <div class="flow-sub">Watches the OUTPUT bucket, not the raw input</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="flow-box flow-db">
+      <div class="flow-label">Loads new data</div>
+      <div class="flow-main">PostgreSQL + pgvector</div>
+      <div class="flow-sub">New chunks + embeddings inserted, HNSW auto-updates</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="flow-box flow-app">
+      <div class="flow-label">Uses updated data</div>
+      <div class="flow-main">Chat App / RAG Agent</div>
+      <div class="flow-sub">Semantic search on fresh data, answers with citations</div>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card card-green">
+      <h3>Watcher watches OUTPUT, not INPUT</h3>
+      <p>The watcher in the chat app monitors the location where the <strong>pipeline saves its results</strong> (processed data), not where raw documents are uploaded. It detects that processing is done and loads the results.</p>
+    </div>
+    <div class="card card-purple">
+      <h3>Two update strategies</h3>
+      <ul>
+        <li><strong>Automatic:</strong> Watcher/trigger detects new files -> loads into DB immediately</li>
+        <li><strong>Scheduled:</strong> Cron script runs once/day, reads new output, inserts into DB</li>
+      </ul>
+    </div>
+    <div class="card card-blue">
+      <h3>Pipeline runs "in alta parte"</h3>
+      <p>The pipeline and the chat app are decoupled. Pipeline can be a Lambda function, a batch job, a separate server. They communicate only through the shared S3 location.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>HNSW auto-updates on INSERT</h3>
+      <p>When new chunks are inserted into PostgreSQL, the HNSW index updates automatically. No manual rebuild needed. The chat app immediately sees the new data.</p>
+    </div>
+  </div>
+
+  <div class="key-insight">
+    <div class="label">Key idea from the lecturer</div>
+    <p>The pipeline and app don't need to know about each other. They just need to agree on a <strong>shared storage location</strong> (S3 bucket). The pipeline writes there, the app reads from there. This is a simple, decoupled architecture that works at any scale.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 10: HOW DATA ENTERS POSTGRESQL -->
+<!-- ============================================================ -->
+<div class="section" id="db-flow">
+  <h2 class="section-title">How Extracted Data Enters PostgreSQL</h2>
+  <p class="section-desc">Nothing is automatic. Three separate steps, done at different times, by different people/tools.</p>
+
+  <div class="card-grid">
+    <div class="card card-purple">
+      <h3>Step 1: Define the table (once, by developer)</h3>
+      <p>You write a SQLAlchemy model with a JSONB column. The column has no fixed shape -- it accepts any valid JSON. You don't define <code>prestator</code>, <code>total</code>, etc. at the database level.</p>
+      <p style="margin-top:6px;"><span class="file-ref">slide13.py</span></p>
+    </div>
+    <div class="card card-purple">
+      <h3>Step 2: Create the table (once, by Alembic)</h3>
+      <p>Run <code>alembic upgrade head</code> to execute the migration. This creates the actual table in PostgreSQL. The JSONB column exists but is empty.</p>
+      <p style="margin-top:6px;"><span class="file-ref">slide55.py</span></p>
+    </div>
+    <div class="card card-purple">
+      <h3>Step 3: Fill it at runtime (every document)</h3>
+      <p>Your extraction code calls <code>repo.create(**extraction.to_db_format())</code>. This INSERT puts the extracted fields into the JSONB column.</p>
+      <p style="margin-top:6px;"><span class="file-ref">slide35-2.py</span></p>
+    </div>
+  </div>
+
+  <h3 style="color:#d8b4fe; margin: 24px 0 12px;">The full chain for one document:</h3>
+
+  <div class="tool-chain">
+    <div class="tool-box tool-llm">
+      <div class="actor">Gemini + Pydantic (slide34-2.py)</div>
+      <div class="action">LLM extracts structured data from text</div>
+      <div class="detail">Returns: DocumentExtraction(filename, content, doc_type, extra_metadata)</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-code">
+      <div class="actor">extraction.to_db_format() (slide31.py)</div>
+      <div class="action">Converts Pydantic object to dict for the repository</div>
+      <div class="detail">{ "filename": "factura_001.txt", "content": "FACTURA...", "metadata": {"doc_type": "invoice", "numar": "FV-2024-001", "total": 18088.0} }</div>
+    </div>
+    <div class="flow-arrow-down">v</div>
+    <div class="tool-box tool-db">
+      <div class="actor">repo.create(**extraction.to_db_format()) (slide35-2.py)</div>
+      <div class="action">INSERT INTO documents (filename, content, metadata)</div>
+      <div class="detail">db.add(doc) -> db.commit() -> row exists in PostgreSQL</div>
+    </div>
+  </div>
+
+  <div class="code-block">
+<span class="comment"># slide13.py -- the table definition (Step 1)</span>
+<span class="keyword">class</span> <span class="type">Document</span>(Base):
+    __tablename__ = <span class="string">"documents"</span>
+
+    id = Column(Integer, primary_key=True)
+    filename = Column(String(255))
+    content = Column(Text)                                   <span class="comment"># full text</span>
+    doc_metadata = Column(<span class="string">"metadata"</span>, <span class="type">JSONB</span>, default=dict)   <span class="comment"># any JSON goes here</span>
+    created_at = Column(DateTime, server_default=func.now())
+  </div>
+
+  <div class="code-block">
+<span class="comment"># slide31.py -- to_db_format() converts extraction to DB shape</span>
+<span class="keyword">class</span> <span class="type">DocumentExtraction</span>(BaseModel):
+    filename: str
+    content: str
+    doc_type: DocType
+    extra_metadata: dict
+
+    <span class="keyword">def</span> <span class="func">to_db_format</span>(self):
+        <span class="keyword">return</span> {
+            <span class="string">"filename"</span>: self.filename,
+            <span class="string">"content"</span>: self.content,
+            <span class="string">"metadata"</span>: {<span class="string">"doc_type"</span>: self.doc_type, **self.extra_metadata},
+        }
+  </div>
+
+  <div class="code-block">
+<span class="comment"># slide35-2.py -- the actual save (Step 3)</span>
+<span class="keyword">def</span> <span class="func">process_document</span>(self, path):
+    content = self.<span class="func">load_document</span>(path)              <span class="comment"># 1. Load</span>
+    extraction = self.<span class="func">extract_metadata</span>(content)      <span class="comment"># 2. Extract (Gemini + Pydantic)</span>
+
+    <span class="keyword">with</span> <span class="func">transaction</span>() <span class="keyword">as</span> db:
+        repo = <span class="type">DocumentRepository</span>(db)
+        doc = repo.<span class="func">create</span>(**extraction.<span class="func">to_db_format</span>())  <span class="comment"># 3. INSERT into PostgreSQL</span>
+  </div>
+
+  <div class="key-insight">
+    <div class="label">Why JSONB is powerful here</div>
+    <p>The JSONB column is <strong>schema-less</strong>. An invoice row can have <code>{"numar", "total", "client"}</code> while a contract row has <code>{"prestator", "beneficiar", "valoare"}</code> -- in the <strong>same column</strong>, in the same table. No migration needed when you add a new document type or extract a new field. PostgreSQL accepts any valid JSON and lets you query it with <code>-&gt;&gt;</code> operators.</p>
+  </div>
+
+  <h3 style="color:#d8b4fe; margin: 24px 0 12px;">What the database looks like after processing 2 documents:</h3>
+
+  <div class="code-block" style="font-size:0.78rem;">
+<span class="comment">-- documents table</span>
+<span class="comment">-- id=1: invoice with invoice-specific fields in JSONB</span>
+<span class="comment">-- id=2: contract with contract-specific fields in JSONB</span>
+
+id │ filename              │ content          │ metadata (JSONB)
+───┼───────────────────────┼──────────────────┼──────────────────────────────────────────
+ 1 │ factura_001.txt       │ FACTURA FISCALA  │ {<span class="string">"doc_type"</span>: <span class="string">"invoice"</span>,
+   │                       │ Nr. FV-2024-001  │  <span class="string">"numar"</span>: <span class="string">"FV-2024-001"</span>,
+   │                       │ ...              │  <span class="string">"total"</span>: <span class="type">18088.0</span>,
+   │                       │                  │  <span class="string">"client"</span>: <span class="string">"SC Digital Services SRL"</span>}
+───┼───────────────────────┼──────────────────┼──────────────────────────────────────────
+ 2 │ contract_servicii.txt │ CONTRACT DE      │ {<span class="string">"doc_type"</span>: <span class="string">"contract"</span>,
+   │                       │ PRESTARI...      │  <span class="string">"numar"</span>: <span class="string">"CS-2024-015"</span>,
+   │                       │ ...              │  <span class="string">"prestator"</span>: <span class="string">"SC CloudTech Services SRL"</span>,
+   │                       │                  │  <span class="string">"valoare"</span>: <span class="type">45000.0</span>,
+   │                       │                  │  <span class="string">"durata_luni"</span>: <span class="type">6</span>}
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECTION 11: CHUNKING DIFFERENT ROLES -->
+<!-- ============================================================ -->
+<div class="section" id="chunking-roles">
+  <h2 class="section-title">Chunking: Two Different Roles in Each Pipeline</h2>
+  <p class="section-desc">The same word "chunking" means different things depending on which pipeline you're in.</p>
+
+  <div class="card-grid">
+    <div class="card card-blue">
+      <h3 class="col-extract">In the Extraction Pipeline</h3>
+      <p><strong>Purpose:</strong> Make text small enough for the LLM's context window.</p>
+      <p><strong>When:</strong> Only if document &gt; ~4000 chars. Short invoices skip it.</p>
+      <p><strong>After chunking:</strong> Join first 3 chunks back into one text, one LLM call, one Pydantic result.</p>
+      <p><strong>Are chunks saved?</strong> No. Chunks are temporary -- only the extracted fields (numar, total, prestator) survive into the database.</p>
+    </div>
+    <div class="card card-green">
+      <h3 class="col-rag">In the RAG Pipeline</h3>
+      <p><strong>Purpose:</strong> Create focused text pieces that each get their own embedding.</p>
+      <p><strong>When:</strong> Always, for every document.</p>
+      <p><strong>After chunking:</strong> Each chunk gets embedded separately, stored as its own row.</p>
+      <p><strong>Are chunks saved?</strong> Yes. Every chunk is a row in <code>document_chunks</code> with its embedding.</p>
+    </div>
+  </div>
+
+  <h3 style="color:#f8fafc; margin: 24px 0 12px;">Same file, two pipelines, different outcomes:</h3>
+
+  <div class="code-block" style="font-size:0.8rem;">
+<span class="comment">factura_001.txt (~800 chars, short document)</span>
+
+<span class="func">Extraction Pipeline:</span>
+  load -> <span class="type">skip chunking</span> (< 4000 chars) -> Gemini extracts -> save to documents.metadata
+  Result: <span class="string">1 row in documents table</span> (JSONB: numar, total, client...)
+  Chunks saved? <span class="type">No</span>
+
+<span class="func">RAG Pipeline:</span>
+  load -> <span class="type">chunk always</span> (500 chars each) -> embed each chunk -> save to document_chunks
+  Result: <span class="string">2 rows in document_chunks</span> (each with embedding vector)
+  Chunks saved? <span class="type">Yes, permanently</span>
+  </div>
+
+  <div class="code-block" style="font-size:0.8rem;">
+<span class="comment">contract_servicii.txt (~3500 chars, larger document)</span>
+
+<span class="func">Extraction Pipeline:</span>
+  load -> <span class="type">skip chunking</span> (< 4000 chars, still fits) -> Gemini extracts -> save to documents.metadata
+  Result: <span class="string">1 row in documents table</span> (JSONB: prestator, beneficiar, valoare...)
+  Chunks saved? <span class="type">No</span>
+
+<span class="func">RAG Pipeline:</span>
+  load -> <span class="type">chunk</span> (500 chars, 50 overlap) -> embed each chunk -> save to document_chunks
+  Result: <span class="string">~7 rows in document_chunks</span> (penalties, obligations, payment terms...)
+  Chunks saved? <span class="type">Yes, permanently</span>
+  </div>
+
+  <div class="key-insight">
+    <div class="label">The two pipelines process the same file independently</div>
+    <p>The extraction pipeline reads the file and saves <strong>1 row</strong> in <code>documents</code> (with structured JSONB metadata). The RAG pipeline reads the <strong>same file</strong> and saves <strong>N rows</strong> in <code>document_chunks</code> (with embeddings). They link through <code>document_id</code> (foreign key). At query time, the extracted metadata is used for <strong>filtering</strong> (WHERE) and the chunk embeddings are used for <strong>searching</strong> (HNSW).</p>
+  </div>
+
+  <h3 style="color:#f8fafc; margin: 24px 0 12px;">How the tables connect:</h3>
+
+  <div class="code-block" style="font-size:0.78rem;">
+<span class="comment">-- documents table (from extraction pipeline)</span>
+id │ filename              │ metadata (JSONB)
+───┼───────────────────────┼─────────────────────────────────
+ 2 │ contract_servicii.txt │ {<span class="string">"prestator"</span>: <span class="string">"CloudTech"</span>, <span class="string">"valoare"</span>: <span class="type">45000</span>}
+                                    │
+                    <span class="param">document_id = 2</span> (foreign key)
+                                    │
+<span class="comment">-- document_chunks table (from RAG pipeline)</span>
+id │ document_id │ chunk_index │ content                     │ embedding
+───┼─────────────┼─────────────┼─────────────────────────────┼──────────────
+ 1 │      2      │      0      │ "CONTRACT DE PRESTARI..."   │ [0.02, -0.08, ...]
+ 2 │      2      │      1      │ "VALOAREA CONTRACTULUI..."  │ [0.06,  0.01, ...]
+ 3 │      2      │      2      │ "OBLIGATIILE PRESTAT..."    │ [-0.03, 0.05, ...]
+ 4 │      2      │      3      │ "OBLIGATIILE BENEFIC..."    │ [0.04, -0.01, ...]
+  </div>
+
+  <div class="highlight">
+    <div class="highlight-title">RAG only uses the chunks for answering, not the extracted metadata</div>
+    <p>When RAG builds the context for the LLM prompt, it uses <code>chunk.content</code> (the text). The extracted metadata (<code>numar</code>, <code>prestator</code>, <code>total</code>) is never injected into the prompt -- it's only used for <strong>filtering</strong> with <code>WHERE metadata->>'prestator' = '...'</code> to narrow down which document's chunks to search.</p>
+  </div>
+</div>
+
+<hr class="separator">
+
+<div style="text-align:center; padding: 20px 0 40px; color: #475569; font-size: 0.85rem;">
+  <p>Skillab AI Course -- Lectia 3 & 4 -- Session 2 Study Notes</p>
+  <p style="margin-top:4px;">Source files: code-snippets-lesson-3/ and code-snippets-lesson-4/</p>
+</div>
+
+</div>
+</body>
+</html>

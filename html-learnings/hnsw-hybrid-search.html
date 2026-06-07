@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HNSW Traversal: With vs Without Document Filtering</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+  h1 { text-align: center; font-size: 1.8rem; margin: 30px 0 8px; color: #f8fafc; }
+  .subtitle { text-align: center; color: #94a3b8; margin-bottom: 30px; font-size: 0.95rem; }
+
+  /* Scenario tabs */
+  .tabs { display: flex; gap: 12px; justify-content: center; margin-bottom: 30px; }
+  .tab { padding: 12px 28px; border-radius: 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; transition: all 0.25s; border: 2px solid transparent; }
+  .tab-rag { background: #1a2e1a; color: #86efac; border-color: #22c55e33; }
+  .tab-rag.active, .tab-rag:hover { border-color: #22c55e; background: #1a3a1a; }
+  .tab-hybrid { background: #2a1f33; color: #d8b4fe; border-color: #a855f733; }
+  .tab-hybrid.active, .tab-hybrid:hover { border-color: #a855f7; background: #341f44; }
+
+  /* Main layout */
+  .main-grid { display: grid; grid-template-columns: 1fr 360px; gap: 24px; }
+  @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+
+  /* Canvas area */
+  .canvas-wrap { background: #1a1f2e; border-radius: 14px; border: 1px solid #2d3748; position: relative; overflow: hidden; }
+  canvas { display: block; width: 100%; cursor: crosshair; }
+  .canvas-label { position: absolute; top: 12px; left: 16px; font-size: 0.8rem; color: #64748b; }
+  .canvas-mode { position: absolute; top: 12px; right: 16px; font-size: 0.8rem; padding: 4px 12px; border-radius: 6px; font-weight: 600; }
+  .mode-rag { background: #1a2e1a; color: #86efac; border: 1px solid #22c55e; }
+  .mode-hybrid { background: #2a1f33; color: #d8b4fe; border: 1px solid #a855f7; }
+
+  /* Side panel */
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .panel { background: #1e293b; border-radius: 12px; padding: 18px; }
+  .panel h3 { font-size: 0.95rem; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #334155; }
+  .panel p, .panel li { font-size: 0.85rem; color: #94a3b8; }
+  .panel ul { padding-left: 16px; }
+  .panel ul li { margin: 4px 0; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: #94a3b8; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .legend-dot.query { background: #f59e0b; border: 2px solid #fbbf24; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: #0f1117; border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .stat .val { font-size: 1.3rem; font-weight: 700; }
+  .stat .lbl { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Steps log */
+  .steps-log { max-height: 240px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+  .steps-log::-webkit-scrollbar { width: 4px; }
+  .steps-log::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+  .step-entry { padding: 4px 0; border-bottom: 1px solid #1e293b22; }
+  .step-num { color: #64748b; }
+  .step-visit { color: #93c5fd; }
+  .step-skip { color: #ef4444; text-decoration: line-through; opacity: 0.6; }
+  .step-found { color: #86efac; font-weight: 600; }
+
+  /* Controls */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; }
+  .btn-play { background: #22c55e; color: #0f1117; }
+  .btn-play:hover { background: #16a34a; }
+  .btn-reset { background: #334155; color: #e2e8f0; }
+  .btn-reset:hover { background: #475569; }
+  .btn-speed { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+  .btn-speed.active { background: #334155; color: #f1f5f9; border-color: #64748b; }
+
+  /* Explanation cards below */
+  .explanation { margin-top: 30px; }
+  .explanation h2 { font-size: 1.3rem; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #334155; }
+  .exp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  @media (max-width: 700px) { .exp-grid { grid-template-columns: 1fr; } }
+  .exp-card { background: #1e293b; border-radius: 12px; padding: 20px; border-left: 4px solid #475569; }
+  .exp-card h3 { font-size: 0.95rem; margin-bottom: 8px; }
+  .exp-card p { font-size: 0.85rem; color: #94a3b8; }
+  .exp-card.green { border-left-color: #22c55e; }
+  .exp-card.purple { border-left-color: #a855f7; }
+  .exp-card.red { border-left-color: #ef4444; }
+  .exp-card.amber { border-left-color: #f59e0b; }
+  .exp-card.blue { border-left-color: #3b82f6; }
+
+  .code-inline { background: #0f1117; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.82rem; }
+
+  .insight { background: linear-gradient(135deg, #1a2332, #2a1f33); border: 1px solid #334155; border-radius: 12px; padding: 20px; margin: 20px 0; }
+  .insight .label { font-size: 0.72rem; color: #f59e0b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .insight p { font-size: 0.88rem; color: #cbd5e1; }
+
+  .sql-block { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 10px; padding: 16px; margin: 12px 0; font-family: monospace; font-size: 0.82rem; line-height: 1.7; overflow-x: auto; }
+  .sql-kw { color: #c084fc; }
+  .sql-fn { color: #93c5fd; }
+  .sql-str { color: #86efac; }
+  .sql-comment { color: #6b7280; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>HNSW Traversal: RAG Only vs Hybrid Search</h1>
+<p class="subtitle">Interactive visualization: what happens inside the HNSW graph with and without WHERE document_id IN (...)</p>
+
+<div class="tabs">
+  <div class="tab tab-rag active" onclick="setMode('rag')">RAG Only -- search all chunks</div>
+  <div class="tab tab-hybrid" onclick="setMode('hybrid')">Hybrid -- filter + search</div>
+</div>
+
+<div class="main-grid">
+  <!-- Canvas -->
+  <div class="canvas-wrap">
+    <canvas id="graph" width="760" height="560"></canvas>
+    <div class="canvas-label">HNSW Graph -- Layer 0 (all chunks)</div>
+    <div class="canvas-mode mode-rag" id="modeLabel">RAG ONLY</div>
+  </div>
+
+  <!-- Side panel -->
+  <div class="side">
+    <!-- Legend -->
+    <div class="panel">
+      <h3>Documents in the graph</h3>
+      <div class="legend" id="legendContainer"></div>
+      <div class="legend" style="margin-top: 8px;">
+        <div class="legend-item"><div class="legend-dot query"></div> Query vector</div>
+        <div class="legend-item"><div class="legend-dot" style="background:transparent;border:3px solid #ef4444;"></div> Greyed out (filtered)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fff;border:2px solid #22c55e;"></div> Visited</div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="panel">
+      <h3>Controls</h3>
+      <div class="controls">
+        <button class="btn btn-play" id="btnPlay" onclick="startTraversal()">Play traversal</button>
+        <button class="btn btn-reset" onclick="resetGraph()">Reset</button>
+      </div>
+      <div class="controls" style="margin-top: 8px;">
+        <span style="font-size:0.8rem;color:#64748b;line-height:2.2;">Speed:</span>
+        <button class="btn btn-speed active" data-speed="600" onclick="setSpeed(600,this)">Slow</button>
+        <button class="btn btn-speed" data-speed="300" onclick="setSpeed(300,this)">Medium</button>
+        <button class="btn btn-speed" data-speed="100" onclick="setSpeed(100,this)">Fast</button>
+      </div>
+      <p style="font-size:0.78rem;color:#64748b;margin-top:10px;">Query: "Ce spun contractele cu TechDev despre penalitati?"</p>
+      <p style="font-size:0.78rem;color:#64748b;">Filtering for: <strong style="color:#d8b4fe">doc_id IN (TechDev docs)</strong></p>
+    </div>
+
+    <!-- Stats -->
+    <div class="panel">
+      <h3>Search Results</h3>
+      <div class="stats">
+        <div class="stat"><div class="val" id="statVisited" style="color:#93c5fd">0</div><div class="lbl">Nodes visited</div></div>
+        <div class="stat"><div class="val" id="statSkipped" style="color:#ef4444">0</div><div class="lbl">Nodes skipped</div></div>
+        <div class="stat"><div class="val" id="statResults" style="color:#86efac">0</div><div class="lbl">Results (top-k)</div></div>
+        <div class="stat"><div class="val" id="statRelevant" style="color:#fbbf24">0</div><div class="lbl">Relevant results</div></div>
+      </div>
+    </div>
+
+    <!-- Steps log -->
+    <div class="panel">
+      <h3>Traversal Log</h3>
+      <div class="steps-log" id="stepsLog">
+        <div style="color:#64748b;font-style:italic;">Click "Play traversal" to start...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXPLANATION SECTION -->
+<!-- ============================================================ -->
+<div class="explanation">
+  <h2>How HNSW Behaves Differently</h2>
+
+  <div class="exp-grid">
+    <div class="exp-card green">
+      <h3 style="color:#86efac">RAG Only: Search all chunks</h3>
+      <p>The HNSW graph contains ALL chunks from ALL documents. The query vector enters at the top layer and greedily descends to layer 0, finding the nearest neighbors by cosine distance.</p>
+      <p style="margin-top:8px;"><strong>Problem:</strong> If you ask about TechDev's penalties, the top-5 closest chunks might be from other companies' contracts that also mention penalties. TechDev's specific clause might be ranked #7 and get cut off.</p>
+    </div>
+    <div class="exp-card purple">
+      <h3 style="color:#d8b4fe">Hybrid: Filter THEN search</h3>
+      <p>Before HNSW traversal, PostgreSQL applies <span class="code-inline">WHERE document_id IN (3, 7)</span>. The graph still exists, but only nodes belonging to TechDev documents are considered as candidates.</p>
+      <p style="margin-top:8px;"><strong>Result:</strong> All top-5 results are from TechDev's documents. The penalty clause that was #7 globally is now #1 within the filtered set.</p>
+    </div>
+  </div>
+
+  <h2 style="margin-top: 30px;">What PostgreSQL Actually Does</h2>
+
+  <div class="sql-block">
+<span class="sql-comment">-- RAG only: searches entire HNSW graph</span>
+<span class="sql-kw">SELECT</span> chunk.*, 1 - (embedding <span class="sql-fn">&lt;=&gt;</span> <span class="sql-str">$query_emb</span>) <span class="sql-kw">AS</span> score
+<span class="sql-kw">FROM</span> document_chunks chunk
+<span class="sql-kw">ORDER BY</span> embedding <span class="sql-fn">&lt;=&gt;</span> <span class="sql-str">$query_emb</span>
+<span class="sql-kw">LIMIT</span> 5;
+
+<span class="sql-comment">-- Hybrid: filter first, HNSW only visits matching nodes</span>
+<span class="sql-kw">SELECT</span> chunk.*, 1 - (embedding <span class="sql-fn">&lt;=&gt;</span> <span class="sql-str">$query_emb</span>) <span class="sql-kw">AS</span> score
+<span class="sql-kw">FROM</span> document_chunks chunk
+<span class="sql-kw">WHERE</span> chunk.document_id <span class="sql-kw">IN</span> (3, 7)    <span class="sql-comment">-- TechDev's documents only</span>
+<span class="sql-kw">ORDER BY</span> embedding <span class="sql-fn">&lt;=&gt;</span> <span class="sql-str">$query_emb</span>
+<span class="sql-kw">LIMIT</span> 5;
+  </div>
+
+  <div class="exp-grid">
+    <div class="exp-card amber">
+      <h3>Where does the WHERE come from?</h3>
+      <p>The LLM doesn't write SQL. It calls a tool with parameters like <span class="code-inline">{ query: "penalitati", prestator: "TechDev" }</span>. Your Python code runs <span class="code-inline">filter_by_metadata("prestator", "TechDev")</span> on the JSONB column to get doc_ids, then passes them into the similarity search.</p>
+    </div>
+    <div class="exp-card blue">
+      <h3>How does the JSONB filter work?</h3>
+      <p>The extraction pipeline (Lectia 3) saved structured data into <span class="code-inline">documents.metadata</span> as JSONB. PostgreSQL's <span class="code-inline">-&gt;&gt;</span> operator extracts a key from JSONB as text: <span class="code-inline">WHERE metadata-&gt;&gt;'prestator' = 'SC TechDev SRL'</span>. This returns the document IDs to filter on.</p>
+    </div>
+  </div>
+
+  <div class="insight">
+    <div class="label">Why not filter AFTER the HNSW search?</div>
+    <p>If you search globally with top_k=5 and then filter, you might end up with 0-2 results (the rest were from other companies). You can't just increase top_k to compensate -- you'd need to guess how many non-matching results there are. Filtering before the search guarantees exactly top_k results from the right documents.</p>
+  </div>
+
+  <div class="exp-grid">
+    <div class="exp-card red">
+      <h3>Wrong: post-filter</h3>
+      <p>
+        1. HNSW returns top 5 globally<br>
+        2. Filter: keep only TechDev<br>
+        3. Result: maybe 1-2 chunks left<br>
+        4. Penalty clause was #7 globally -- lost
+      </p>
+    </div>
+    <div class="exp-card green">
+      <h3>Correct: pre-filter</h3>
+      <p>
+        1. WHERE limits candidates to TechDev<br>
+        2. HNSW searches within those only<br>
+        3. Result: exactly 5 TechDev chunks<br>
+        4. Penalty clause is now #1 -- found
+      </p>
+    </div>
+  </div>
+
+  <h2 style="margin-top: 30px;">The Full Chain</h2>
+
+  <div class="exp-grid" style="grid-template-columns: 1fr;">
+    <div class="exp-card" style="border-left-color: #e2e8f0;">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;font-size:0.88rem;">
+        <span style="background:#1a2332;padding:8px 14px;border-radius:8px;border:1px solid #3b82f6;color:#93c5fd;">User asks question</span>
+        <span style="color:#475569;">--&gt;</span>
+        <span style="background:#1a2332;padding:8px 14px;border-radius:8px;border:1px solid #3b82f6;color:#93c5fd;">LLM fills tool params</span>
+        <span style="color:#475569;">--&gt;</span>
+        <span style="background:#2a1f33;padding:8px 14px;border-radius:8px;border:1px solid #a855f7;color:#d8b4fe;">JSONB filter (doc_ids)</span>
+        <span style="color:#475569;">--&gt;</span>
+        <span style="background:#1a2e1a;padding:8px 14px;border-radius:8px;border:1px solid #22c55e;color:#86efac;">HNSW search (filtered)</span>
+        <span style="color:#475569;">--&gt;</span>
+        <span style="background:#1e293b;padding:8px 14px;border-radius:8px;border:1px solid #f59e0b;color:#fcd34d;">Top-k chunks</span>
+        <span style="color:#475569;">--&gt;</span>
+        <span style="background:#1a2332;padding:8px 14px;border-radius:8px;border:1px solid #3b82f6;color:#93c5fd;">LLM answers with context</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+// ============================================================
+// GRAPH DATA: nodes represent chunks, colored by document
+// ============================================================
+
+const DOCS = [
+  { id: 'techdev-1',  name: 'TechDev Contract',    color: '#a855f7', colorFaded: '#a855f733' },
+  { id: 'techdev-2',  name: 'TechDev Addendum',    color: '#c084fc', colorFaded: '#c084fc33' },
+  { id: 'clientcorp', name: 'ClientCorp Contract',  color: '#3b82f6', colorFaded: '#3b82f633' },
+  { id: 'acme',       name: 'ACME Invoice',         color: '#22c55e', colorFaded: '#22c55e33' },
+  { id: 'globex',     name: 'Globex Contract',      color: '#f59e0b', colorFaded: '#f59e0b33' },
+];
+
+const TECHDEV_IDS = ['techdev-1', 'techdev-2'];
+
+// Content labels for nodes
+const CHUNK_LABELS = {
+  'techdev-1':  ['Reziliere 30 zile', 'Penalitati 0.1%/zi', 'Obligatii prestator', 'Valoare 45000 RON', 'Confidentialitate'],
+  'techdev-2':  ['Amendament pret', 'Penalitati intarziere', 'Clauza forta majora'],
+  'clientcorp': ['Reziliere 60 zile', 'Penalitati 0.05%/zi', 'Plata lunar', 'Livrare Q3 2024'],
+  'acme':       ['Factura 9520 RON', 'Laptop Dell XPS', 'Termen plata 30 zile'],
+  'globex':     ['Penalitati 0.2%/zi', 'Contract 24 luni', 'NDA strict', 'Arbitraj Bucuresti'],
+};
+
+// Generate node positions in a somewhat clustered layout
+const nodes = [];
+const W = 760, H = 560;
+const RNG = mulberry32(42); // seeded random for reproducibility
+
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+}
+
+// Cluster centers for each doc
+const centers = [
+  { x: 200, y: 160 },  // techdev-1
+  { x: 280, y: 380 },  // techdev-2
+  { x: 540, y: 140 },  // clientcorp
+  { x: 140, y: 440 },  // acme
+  { x: 580, y: 380 },  // globex
+];
+
+DOCS.forEach((doc, di) => {
+  const labels = CHUNK_LABELS[doc.id];
+  labels.forEach((label, ci) => {
+    const cx = centers[di].x + (RNG() - 0.5) * 140;
+    const cy = centers[di].y + (RNG() - 0.5) * 100;
+    nodes.push({
+      id: `${doc.id}-${ci}`,
+      docId: doc.id,
+      x: Math.max(40, Math.min(W - 40, cx)),
+      y: Math.max(40, Math.min(H - 40, cy)),
+      color: doc.color,
+      colorFaded: doc.colorFaded,
+      label: label,
+      isTechDev: TECHDEV_IDS.includes(doc.id),
+      visited: false,
+      isResult: false,
+      skipped: false,
+    });
+  });
+});
+
+// Query position (where the user's question lands in vector space)
+const queryPos = { x: 240, y: 270 };
+
+// Compute distances from query for each node
+nodes.forEach(n => {
+  n.dist = Math.sqrt((n.x - queryPos.x) ** 2 + (n.y - queryPos.y) ** 2);
+});
+
+// Build HNSW-like edges: connect each node to m=3 nearest neighbors
+const edges = [];
+const M = 3;
+nodes.forEach((n, i) => {
+  const others = nodes.map((o, j) => ({ j, d: Math.sqrt((n.x - o.x) ** 2 + (n.y - o.y) ** 2) }))
+    .filter(o => o.j !== i)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, M);
+  others.forEach(o => {
+    const key = [Math.min(i, o.j), Math.max(i, o.j)].join('-');
+    if (!edges.find(e => e.key === key)) {
+      edges.push({ key, from: i, to: o.j });
+    }
+  });
+});
+
+// Also add a few longer-range edges for realism
+for (let i = 0; i < 8; i++) {
+  const a = Math.floor(RNG() * nodes.length);
+  let b = Math.floor(RNG() * nodes.length);
+  while (b === a) b = Math.floor(RNG() * nodes.length);
+  const key = [Math.min(a, b), Math.max(a, b)].join('-');
+  if (!edges.find(e => e.key === key)) {
+    edges.push({ key, from: a, to: b });
+  }
+}
+
+// ============================================================
+// SIMULATION STATE
+// ============================================================
+let mode = 'rag'; // 'rag' or 'hybrid'
+let animating = false;
+let speed = 600;
+let animTimer = null;
+let visited = 0, skipped = 0, results = 0, relevant = 0;
+
+const canvas = document.getElementById('graph');
+const ctx = canvas.getContext('2d');
+
+// Build legend
+const legendContainer = document.getElementById('legendContainer');
+DOCS.forEach(doc => {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  item.innerHTML = `<div class="legend-dot" style="background:${doc.color};"></div> ${doc.name}`;
+  legendContainer.appendChild(item);
+});
+
+// ============================================================
+// DRAWING
+// ============================================================
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw edges
+  edges.forEach(e => {
+    const a = nodes[e.from], b = nodes[e.to];
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+
+    // Fade edges to greyed-out nodes
+    if (mode === 'hybrid') {
+      const aVisible = a.isTechDev, bVisible = b.isTechDev;
+      if (!aVisible && !bVisible) {
+        ctx.strokeStyle = '#ffffff06';
+      } else if (!aVisible || !bVisible) {
+        ctx.strokeStyle = '#ffffff0a';
+      } else {
+        ctx.strokeStyle = '#ffffff18';
+      }
+    } else {
+      ctx.strokeStyle = '#ffffff12';
+    }
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // Highlight traversal edges
+  if (animating || visited > 0) {
+    // Draw visited path edges
+    for (let i = 0; i < nodes.length; i++) {
+      if (!nodes[i].visited) continue;
+      edges.forEach(e => {
+        const other = e.from === i ? e.to : (e.to === i ? e.from : -1);
+        if (other >= 0 && nodes[other].visited) {
+          ctx.beginPath();
+          ctx.moveTo(nodes[e.from].x, nodes[e.from].y);
+          ctx.lineTo(nodes[e.to].x, nodes[e.to].y);
+          ctx.strokeStyle = mode === 'hybrid' ? '#a855f744' : '#22c55e44';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      });
+    }
+  }
+
+  // Draw nodes
+  nodes.forEach(n => {
+    const isFiltered = mode === 'hybrid' && !n.isTechDev;
+    const r = n.isResult ? 12 : 8;
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+
+    if (isFiltered) {
+      // Greyed out
+      ctx.fillStyle = n.skipped ? '#ef444433' : '#ffffff0a';
+      ctx.fill();
+      if (n.skipped) {
+        ctx.strokeStyle = '#ef444488';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // X mark
+        ctx.beginPath();
+        ctx.moveTo(n.x - 4, n.y - 4); ctx.lineTo(n.x + 4, n.y + 4);
+        ctx.moveTo(n.x + 4, n.y - 4); ctx.lineTo(n.x - 4, n.y + 4);
+        ctx.strokeStyle = '#ef4444aa';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = '#ffffff15';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    } else if (n.isResult) {
+      // Result node
+      ctx.fillStyle = n.color;
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      // Glow
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = n.color + '44';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    } else if (n.visited) {
+      // Visited
+      ctx.fillStyle = n.color + 'cc';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff88';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    } else {
+      // Normal
+      ctx.fillStyle = isFiltered ? n.colorFaded : n.color + '88';
+      ctx.fill();
+      ctx.strokeStyle = isFiltered ? '#ffffff10' : n.color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Label
+    if (n.visited || n.isResult || n.skipped) {
+      ctx.font = '10px "Segoe UI", sans-serif';
+      ctx.fillStyle = isFiltered ? '#ef444488' : '#ffffffcc';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label, n.x, n.y - r - 6);
+    }
+  });
+
+  // Draw query point
+  ctx.beginPath();
+  ctx.arc(queryPos.x, queryPos.y, 10, 0, Math.PI * 2);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fill();
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // Pulsing ring
+  const pulse = (Date.now() % 2000) / 2000;
+  ctx.beginPath();
+  ctx.arc(queryPos.x, queryPos.y, 10 + pulse * 15, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(251, 191, 36, ${0.4 - pulse * 0.4})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Label
+  ctx.font = 'bold 11px "Segoe UI", sans-serif';
+  ctx.fillStyle = '#fbbf24';
+  ctx.textAlign = 'center';
+  ctx.fillText('QUERY', queryPos.x, queryPos.y - 18);
+  ctx.font = '9px "Segoe UI", sans-serif';
+  ctx.fillStyle = '#fbbf2488';
+  ctx.fillText('"penalitati"', queryPos.x, queryPos.y + 24);
+
+  if (!animating) requestAnimationFrame(draw);
+}
+
+// ============================================================
+// TRAVERSAL SIMULATION
+// ============================================================
+function startTraversal() {
+  if (animating) return;
+  resetState();
+  animating = true;
+  document.getElementById('btnPlay').textContent = 'Running...';
+  document.getElementById('btnPlay').style.opacity = '0.5';
+
+  const log = document.getElementById('stepsLog');
+  log.innerHTML = '';
+
+  // Sort nodes by distance to query
+  const sorted = nodes.map((n, i) => ({ idx: i, dist: n.dist, node: n }))
+    .sort((a, b) => a.dist - b.dist);
+
+  // HNSW greedy search simulation:
+  // Start from a random "entry point" (far node) and greedily move closer
+  const entryIdx = sorted[sorted.length - 3].idx; // start from a far node
+
+  // Build adjacency list
+  const adj = {};
+  nodes.forEach((_, i) => adj[i] = []);
+  edges.forEach(e => {
+    adj[e.from].push(e.to);
+    adj[e.to].push(e.from);
+  });
+
+  // Greedy traversal
+  const visitOrder = [];
+  const visitedSet = new Set();
+  const toVisit = [entryIdx];
+  const topK = 5;
+
+  function greedyStep() {
+    if (toVisit.length === 0 || visitOrder.length > 25) {
+      finishTraversal(visitOrder);
+      return;
+    }
+
+    // Sort candidates by distance to query
+    toVisit.sort((a, b) => nodes[a].dist - nodes[b].dist);
+    const current = toVisit.shift();
+
+    if (visitedSet.has(current)) {
+      greedyStep();
+      return;
+    }
+    visitedSet.add(current);
+
+    const n = nodes[current];
+    const isFiltered = mode === 'hybrid' && !n.isTechDev;
+
+    if (isFiltered) {
+      // In hybrid mode: node exists in graph but is skipped
+      n.skipped = true;
+      skipped++;
+      document.getElementById('statSkipped').textContent = skipped;
+      addLogEntry(visitOrder.length, n, 'skip');
+    } else {
+      n.visited = true;
+      visited++;
+      document.getElementById('statVisited').textContent = visited;
+      visitOrder.push(current);
+      addLogEntry(visitOrder.length, n, 'visit');
+    }
+
+    // Add neighbors to candidates
+    adj[current].forEach(nb => {
+      if (!visitedSet.has(nb)) toVisit.push(nb);
+    });
+
+    draw();
+    animTimer = setTimeout(greedyStep, speed);
+  }
+
+  // Start animation loop for pulsing
+  function animLoop() {
+    if (animating) {
+      draw();
+      requestAnimationFrame(animLoop);
+    }
+  }
+  animLoop();
+
+  animTimer = setTimeout(greedyStep, speed);
+}
+
+function finishTraversal(visitOrder) {
+  // Pick top-5 closest visited nodes as results
+  const candidates = visitOrder.map(i => ({ idx: i, dist: nodes[i].dist }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 5);
+
+  candidates.forEach(c => {
+    nodes[c.idx].isResult = true;
+    results++;
+  });
+
+  // Count how many results are actually from TechDev
+  relevant = candidates.filter(c => nodes[c.idx].isTechDev).length;
+
+  document.getElementById('statResults').textContent = results;
+  document.getElementById('statRelevant').textContent = `${relevant}/5`;
+
+  // Color code the relevant stat
+  const relEl = document.getElementById('statRelevant');
+  relEl.style.color = relevant >= 4 ? '#86efac' : relevant >= 2 ? '#fbbf24' : '#ef4444';
+
+  addLogEntry(-1, null, 'done');
+
+  draw();
+  animating = false;
+  document.getElementById('btnPlay').textContent = 'Play traversal';
+  document.getElementById('btnPlay').style.opacity = '1';
+}
+
+function addLogEntry(num, node, type) {
+  const log = document.getElementById('stepsLog');
+  const entry = document.createElement('div');
+  entry.className = 'step-entry';
+
+  if (type === 'visit') {
+    entry.innerHTML = `<span class="step-num">#${num}</span> <span class="step-visit">Visit</span> <span style="color:${node.color}">${node.label}</span> <span style="color:#64748b;font-size:0.7rem">(${node.docId})</span>`;
+  } else if (type === 'skip') {
+    entry.innerHTML = `<span class="step-num">--</span> <span class="step-skip">SKIP ${node.label}</span> <span style="color:#64748b;font-size:0.7rem">(${node.docId} not in filter)</span>`;
+  } else if (type === 'done') {
+    entry.innerHTML = `<span class="step-found">Search complete. ${results} results found, ${relevant}/5 from TechDev.</span>`;
+  }
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ============================================================
+// CONTROLS
+// ============================================================
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab-${m}`).classList.add('active');
+
+  const label = document.getElementById('modeLabel');
+  if (m === 'rag') {
+    label.textContent = 'RAG ONLY';
+    label.className = 'canvas-mode mode-rag';
+  } else {
+    label.textContent = 'HYBRID FILTER';
+    label.className = 'canvas-mode mode-hybrid';
+  }
+  resetGraph();
+}
+
+function resetState() {
+  if (animTimer) clearTimeout(animTimer);
+  nodes.forEach(n => { n.visited = false; n.isResult = false; n.skipped = false; });
+  visited = 0; skipped = 0; results = 0; relevant = 0;
+  document.getElementById('statVisited').textContent = '0';
+  document.getElementById('statSkipped').textContent = '0';
+  document.getElementById('statResults').textContent = '0';
+  document.getElementById('statRelevant').textContent = '0';
+  document.getElementById('statRelevant').style.color = '#fbbf24';
+}
+
+function resetGraph() {
+  animating = false;
+  resetState();
+  document.getElementById('stepsLog').innerHTML = '<div style="color:#64748b;font-style:italic;">Click "Play traversal" to start...</div>';
+  document.getElementById('btnPlay').textContent = 'Play traversal';
+  document.getElementById('btnPlay').style.opacity = '1';
+  draw();
+}
+
+function setSpeed(s, el) {
+  speed = s;
+  document.querySelectorAll('.btn-speed').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// Initial draw
+draw();
+// Keep pulsing query dot
+function idlePulse() { draw(); requestAnimationFrame(idlePulse); }
+idlePulse();
+</script>
+</body>
+</html>
