@@ -7,6 +7,7 @@ from tools.registry import register_tool
 from tools.params_models import CalculatorParams, GetDatetimeParams, WebSearchParams, SearchDocumentsParams
 
 from db.database import transaction
+from db.repositories import DocumentRepository
 from rag.rag_service import RAGService
 
 
@@ -66,11 +67,19 @@ def web_search(params: WebSearchParams) -> str:
 
 @register_tool
 def search_documents(params: SearchDocumentsParams) -> str:
-    """Searches stored documents (invoices, contracts) for relevant information using semantic similarity. Use this tool when the user asks about document contents, suppliers, clients, amounts, dates, or contract clauses."""
+    """Searches stored documents (invoices, contracts) for relevant information using semantic similarity. Use this tool when the user asks about document contents, suppliers, clients, amounts, dates, or contract clauses. Set doc_type to 'factura' or 'contract' to narrow the search when the user's question is clearly about one type."""
 
     with transaction() as db:
+        doc_ids = None
+        if params.doc_type:
+            doc_repo = DocumentRepository(db)
+            docs = doc_repo.filter_by_metadata("doc_type", params.doc_type)
+            doc_ids = [d.id for d in docs]
+            if not doc_ids:
+                return f"No documents found with type '{params.doc_type}'."
+
         rag = RAGService(db)
-        context = rag.get_context(params.query, top_k=params.top_k)
+        context = rag.get_context(params.query, top_k=params.top_k, doc_ids=doc_ids)
 
     if not context:
         return "No relevant documents found for this query."

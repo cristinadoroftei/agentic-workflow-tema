@@ -30,6 +30,7 @@ class ChunkRepository:
         self,
         query_embedding: list[float],
         top_k: int = 5,
+        doc_ids: list[int] | None = None,
     ) -> list[tuple[DocumentChunk, float]]:
         similarity = (1 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("score")
 
@@ -39,6 +40,9 @@ class ChunkRepository:
             .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
             .limit(top_k)
         )
+
+        if doc_ids is not None:
+            stmt = stmt.where(DocumentChunk.document_id.in_(doc_ids))
 
         rows = self.db.execute(stmt).all()
         return [(chunk, float(score)) for chunk, score in rows]

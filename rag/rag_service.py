@@ -45,17 +45,19 @@ class RAGService:
         self,
         query: str,
         top_k: int = 5,
+        doc_ids: list[int] | None = None,
     ) -> list[tuple[DocumentChunk, float]]:
         query_embedding = self.embed(query)
-        return self.chunk_repo.similarity_search(query_embedding, top_k=top_k)
+        return self.chunk_repo.similarity_search(query_embedding, top_k=top_k, doc_ids=doc_ids)
 
     def get_context(
         self,
         query: str,
         top_k: int = 3,
         threshold: float = 0.3,
+        doc_ids: list[int] | None = None,
     ) -> str:
-        results = self.search(query, top_k=top_k)
+        results = self.search(query, top_k=top_k, doc_ids=doc_ids)
         relevant = [(chunk, score) for chunk, score in results if score >= threshold]
 
         if not relevant:

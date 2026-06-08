@@ -1,9 +1,12 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class Invoice(BaseModel):
     """Schema for extracting invoice data."""
 
+    doc_type: Literal["factura"] = Field(default="factura", description="Document type")
     numar: str = Field(description="Invoice number (e.g. FV-2024-001)")
     data: str = Field(description="Issue date (format: YYYY-MM-DD)")
     furnizor: str = Field(description="Supplier/vendor name")
@@ -19,6 +22,7 @@ class Invoice(BaseModel):
 class Contract(BaseModel):
     """Schema for extracting contract data."""
 
+    doc_type: Literal["contract"] = Field(default="contract", description="Document type")
     numar: str = Field(description="Contract number (e.g. CC-2024-008)")
     data_incheierii: str = Field(description="Signing date (format: YYYY-MM-DD)")
     prestator: str = Field(description="Service provider / contractor name")

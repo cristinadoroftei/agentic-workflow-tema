@@ -39,3 +39,7 @@ class SearchDocumentsParams(BaseModel):
         ge=1,
         le=10,
     )
+    doc_type: str | None = Field(
+        default=None,
+        description="Filter by document type before searching: 'factura' or 'contract'. Leave empty to search all documents.",
+    )
