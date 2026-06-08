@@ -1,0 +1,15 @@
+{
+  "numar": "FV-2024-002",
+  "data": "2024-03-22",
+  "furnizor": "SC WebDev Expert SRL",
+  "client": "SC Retail Plus SRL",
+  "total": 15529.5,
+  "moneda": "RON",
+  "produse": [
+    "Dezvoltare website e-commerce",
+    "Integrare sistem de plăți online",
+    "Configurare hosting și domeniu (1 an)",
+    "Training utilizare platformă (8 ore)",
+    "Mentenanță lunară (3 luni)"
+  ]
+}

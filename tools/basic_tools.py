@@ -4,7 +4,10 @@ import httpx
 import zoneinfo
 
 from tools.registry import register_tool
-from tools.params_models import CalculatorParams, GetDatetimeParams, WebSearchParams
+from tools.params_models import CalculatorParams, GetDatetimeParams, WebSearchParams, SearchDocumentsParams
+
+from db.database import transaction
+from rag.rag_service import RAGService
 
 
 @register_tool
@@ -59,3 +62,17 @@ def web_search(params: WebSearchParams) -> str:
         return f"No results found for '{params.query}'. Try a broader or simpler query."
 
     return "\n".join(results)
+
+
+@register_tool
+def search_documents(params: SearchDocumentsParams) -> str:
+    """Searches stored documents (invoices, contracts) for relevant information using semantic similarity. Use this tool when the user asks about document contents, suppliers, clients, amounts, dates, or contract clauses."""
+
+    with transaction() as db:
+        rag = RAGService(db)
+        context = rag.get_context(params.query, top_k=params.top_k)
+
+    if not context:
+        return "No relevant documents found for this query."
+
+    return context

@@ -26,3 +26,16 @@ class WebSearchParams(BaseModel):
         ge=1,
         le=20,
     )
+
+
+class SearchDocumentsParams(BaseModel):
+    query: str = Field(
+        description="Natural language question to search for in stored documents (invoices, contracts)",
+        min_length=2,
+    )
+    top_k: int = Field(
+        default=3,
+        description="Number of most relevant chunks to return",
+        ge=1,
+        le=10,
+    )

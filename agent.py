@@ -1,6 +1,7 @@
 import json
 import os
 
+import anthropic
 import httpx
 from dotenv import load_dotenv
 
@@ -12,35 +13,89 @@ from prompts.registry import get_prompt_registry
 load_dotenv()
 MAX_ITERATIONS = 10
 
-# Provider registry — factory pattern
-# Each provider has: base_url, model, headers builder, and how to build the request body
-PROVIDERS = {
-    "litellm": {
-        "base_url": "http://localhost:4000/v1",
-        "model": "gemini",
-        "headers": lambda: {},
-    },
-    "gemini": {
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": "gemini-2.5-flash",
-        "headers": lambda: {"Authorization": f"Bearer {os.getenv('GEMINI_API_KEY')}"},
-    },
-    "ollama": {
-        "base_url": "http://localhost:11434/v1",
-        "model": "llama3",
-        "headers": lambda: {},
-    },
-}
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Default provider with fallback order
-PROVIDER_ORDER = ["litellm", "gemini", "ollama"]
+PROVIDER_ORDER = ["claude", "gemini"]
 
 
 # --- Sub-step A: LLM Communication ---
 
-def _build_openai_tools(tool_catalog: list[dict]) -> list[dict]:
-    """Convert our catalog to OpenAI-compatible tool format."""
+def _build_claude_tools(tool_catalog: list[dict]) -> list[dict]:
+    """Convert our catalog to Claude tool format."""
     return [
+        {
+            "name": t["name"],
+            "description": t["description"],
+            "input_schema": t["input_schema"],
+        }
+        for t in tool_catalog
+    ]
+
+
+def _call_claude(system_prompt: str, messages: list[dict], tool_catalog: list[dict]) -> dict:
+    """Call Claude natively — no conversion needed."""
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=system_prompt,
+        tools=_build_claude_tools(tool_catalog),
+        messages=messages,
+    )
+    # Serialize every block losslessly to plain dicts. model_dump() preserves all
+    # fields (and any future block types — thinking, server_tool_use, ...) so we
+    # never silently drop content the API sent back. exclude_unset keeps the dicts
+    # minimal and round-trip-safe when sent back to the API.
+    content = [block.model_dump(exclude_unset=True) for block in response.content]
+    return {"role": "assistant", "content": content}
+
+
+def _messages_to_openai(system_prompt: str, messages: list[dict]) -> list[dict]:
+    """Convert Claude-format messages to OpenAI format for Gemini fallback."""
+    openai_messages = [{"role": "system", "content": system_prompt}]
+
+    for msg in messages:
+        if msg["role"] == "user":
+            if isinstance(msg["content"], str):
+                openai_messages.append(msg)
+            elif isinstance(msg["content"], list):
+                # Tool results — each becomes a separate "tool" message in OpenAI
+                for item in msg["content"]:
+                    if item["type"] == "tool_result":
+                        openai_messages.append({
+                            "role": "tool",
+                            "tool_call_id": item["tool_use_id"],
+                            "content": item["content"],
+                        })
+
+        elif msg["role"] == "assistant":
+            content = None
+            tool_calls = []
+            for block in msg["content"]:
+                if block["type"] == "text":
+                    content = block["text"]
+                elif block["type"] == "tool_use":
+                    tool_calls.append({
+                        "id": block["id"],
+                        "type": "function",
+                        "function": {
+                            "name": block["name"],
+                            "arguments": json.dumps(block["input"]),
+                        },
+                    })
+            result = {"role": "assistant", "content": content}
+            if tool_calls:
+                result["tool_calls"] = tool_calls
+            openai_messages.append(result)
+
+    return openai_messages
+
+
+def _call_gemini(system_prompt: str, messages: list[dict], tool_catalog: list[dict]) -> dict:
+    """Call Gemini, converting Claude-format messages to OpenAI format."""
+    openai_tools = [
         {
             "type": "function",
             "function": {
@@ -51,32 +106,46 @@ def _build_openai_tools(tool_catalog: list[dict]) -> list[dict]:
         }
         for t in tool_catalog
     ]
+    openai_messages = _messages_to_openai(system_prompt, messages)
 
-
-def _call_provider(provider_name: str, messages: list[dict], openai_tools: list[dict]) -> dict:
-    """Call a specific LLM provider. Raises on failure."""
-    provider = PROVIDERS[provider_name]
     response = httpx.post(
-        f"{provider['base_url']}/chat/completions",
-        headers=provider["headers"](),
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        headers={"Authorization": f"Bearer {os.getenv('GEMINI_API_KEY')}"},
         json={
-            "model": provider["model"],
-            "messages": messages,
+            "model": GEMINI_MODEL,
+            "messages": openai_messages,
             "tools": openai_tools,
         },
         timeout=60.0,
     )
     response.raise_for_status()
-    return response.json()["choices"][0]["message"]
+    openai_msg = response.json()["choices"][0]["message"]
+
+    # Convert Gemini's OpenAI-format response back to Claude format
+    content = []
+    if openai_msg.get("content"):
+        content.append({"type": "text", "text": openai_msg["content"]})
+    for tc in openai_msg.get("tool_calls", []):
+        content.append({
+            "type": "tool_use",
+            "id": tc["id"],
+            "name": tc["function"]["name"],
+            "input": json.loads(tc["function"]["arguments"]),
+        })
+    return {"role": "assistant", "content": content}
 
 
-def call_llm(messages: list[dict], tool_catalog: list[dict]) -> dict:
+PROVIDERS = {
+    "claude": _call_claude,
+    "gemini": _call_gemini,
+}
+
+
+def call_llm(system_prompt: str, messages: list[dict], tool_catalog: list[dict]) -> dict:
     """Try each provider in order until one succeeds."""
-    openai_tools = _build_openai_tools(tool_catalog)
-
     for provider_name in PROVIDER_ORDER:
         try:
-            result = _call_provider(provider_name, messages, openai_tools)
+            result = PROVIDERS[provider_name](system_prompt, messages, tool_catalog)
             print(f"  [Using: {provider_name}]")
             return result
         except Exception as e:
@@ -87,8 +156,13 @@ def call_llm(messages: list[dict], tool_catalog: list[dict]) -> dict:
 
 # --- Sub-step B: ReAct Loop ---
 
-def react_loop(messages: list[dict]) -> str:
-    """The Think -> Act -> Observe loop. Returns the final answer."""
+def react_loop(system_prompt: str, messages: list[dict]) -> str:
+    """The Think -> Act -> Observe loop. Returns the final answer.
+
+    Uses Claude's native message format:
+    - Assistant content = list of blocks (text / tool_use)
+    - Tool results = user message with tool_result blocks
+    """
     tool_catalog = ToolWrapper.catalog()
 
     for i in range(MAX_ITERATIONS):
@@ -96,32 +170,35 @@ def react_loop(messages: list[dict]) -> str:
 
         # THINK: ask the LLM what to do
         try:
-            assistant_msg = call_llm(messages, tool_catalog)
+            assistant_msg = call_llm(system_prompt, messages, tool_catalog)
         except RuntimeError as e:
             return f"Error: {e}. Please wait a moment and try again (rate limit)."
         messages.append(assistant_msg)
 
+        # Split content blocks into text and tool_use
+        tool_use_blocks = [b for b in assistant_msg["content"] if b["type"] == "tool_use"]
+        text_blocks = [b for b in assistant_msg["content"] if b["type"] == "text"]
+
         # If no tool calls -> the LLM has a final answer
-        if not assistant_msg.get("tool_calls"):
+        if not tool_use_blocks:
             print("LLM returned final answer.")
-            return assistant_msg.get("content", "No response.")
+            return text_blocks[0]["text"] if text_blocks else "No response."
 
-        # ACT: execute each tool the LLM requested
-        for tool_call in assistant_msg["tool_calls"]:
-            func = tool_call["function"]
-            tool_name = func["name"]
-            tool_args = json.loads(func["arguments"])
-
-            print(f"  Tool call: {tool_name}({tool_args})")
-            result = ToolWrapper.call(tool_name, tool_args)
+        # ACT: execute each tool and collect results
+        tool_results = []
+        for block in tool_use_blocks:
+            print(f"  Tool call: {block['name']}({block['input']})")
+            result = ToolWrapper.call(block["name"], block["input"])
             print(f"  Result: {result}")
 
-            # OBSERVE: send the result back to the LLM
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block["id"],
                 "content": result,
             })
+
+        # OBSERVE: send all results back as one user message
+        messages.append({"role": "user", "content": tool_results})
 
     return "Max iterations reached without a final answer."
 
@@ -154,7 +231,7 @@ def main():
 
     current_mode = "planner"
     system_prompt = build_system_prompt(registry, tool_names, current_mode)
-    messages = [{"role": "system", "content": system_prompt}]
+    messages = []
     print(f"[Mode: {current_mode}]")
 
     # Interactive chat loop
@@ -176,12 +253,12 @@ def main():
                 continue
             current_mode = new_mode
             system_prompt = build_system_prompt(registry, tool_names, current_mode)
-            messages = [{"role": "system", "content": system_prompt}]
+            messages = []
             print(f"[Switched to: {current_mode}] (conversation reset)")
             continue
 
         messages.append({"role": "user", "content": question})
-        answer = react_loop(messages)
+        answer = react_loop(system_prompt, messages)
         print(f"\nAgent: {answer}")
 
 

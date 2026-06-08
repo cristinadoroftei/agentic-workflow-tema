@@ -1,0 +1,19 @@
+{
+  "numar": "CS-2024-015",
+  "data_incheierii": "2024-03-01",
+  "prestator": "SC CloudTech Services SRL",
+  "beneficiar": "SC Manufacturing Pro SRL",
+  "obiect": "Implementare sistem ERP pentru managementul producției, migrare date, configurare și personalizare module, suport tehnic și mentenanță",
+  "valoare_totala": 53550.0,
+  "moneda": "EUR",
+  "durata": "6 luni",
+  "data_inceput": "2024-03-01",
+  "data_sfarsit": "2024-08-31",
+  "clauze_importante": [
+    "Confidențialitate: Prestatorul se obligă să păstreze confidențialitatea informațiilor primite",
+    "Garanție: Suport tehnic asigurat în perioada de garanție de 12 luni",
+    "Plată: 40% la semnare, 40% la finalizare, 20% la recepție finală",
+    "Modificări: Contractul se poate modifica numai prin act adițional",
+    "Litigii: Se vor soluționa pe cale amiabilă sau prin instanțele competente din București"
+  ]
+}
