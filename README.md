@@ -1,128 +1,173 @@
-# QA Agent with Tools + Prompts (ReAct Pattern)
+# Document Analyst Agent with RAG
 
-A conversational QA agent that uses the ReAct (Reason + Act) pattern to answer questions by calling tools and reasoning about results.
+A conversational agent that extracts structured data from documents (invoices, contracts), stores them in PostgreSQL with pgvector embeddings, and answers questions using semantic search (RAG).
+
+Built as homework for Skillab AI course (Lessons 1-4).
+
+## Architecture
+
+```
+                    ┌──────────────────────────────────────────┐
+                    │           Extraction Pipeline             │
+                    │  load → classify → chunk → extract → DB  │
+                    └──────────────┬───────────────────────────┘
+                                   │
+            ┌──────────────────────┼──────────────────────┐
+            ▼                      ▼                      ▼
+     extracted_data/        documents table       document_chunks table
+     (JSON files)          (JSONB metadata)       (pgvector embeddings)
+                                                         │
+                                                         ▼
+                    ┌──────────────────────────────────────────┐
+                    │              ReAct Agent                  │
+                    │  user question → search_documents tool    │
+                    │  → RAG context → LLM answer              │
+                    └──────────────────────────────────────────┘
+```
 
 ## Project Structure
 
 ```
 proiect/
-├── agent.py                # QA agent — ReAct loop + LLM communication
+├── agent.py                  # ReAct agent — Claude native format, Gemini fallback
+├── pipeline/
+│   ├── loader.py             # File loader registry (PDF, DOCX, TXT, CSV)
+│   ├── schemas.py            # Invoice + Contract Pydantic models
+│   └── pipeline.py           # Full pipeline: load → classify → chunk → extract → DB + RAG
+├── db/
+│   ├── database.py           # SQLAlchemy engine, SessionLocal, transaction()
+│   ├── models.py             # Document (JSONB metadata) + DocumentChunk (Vector(384))
+│   └── repositories/
+│       ├── document_repository.py   # CRUD + filter_by_metadata
+│       └── chunk_repository.py      # CRUD + similarity_search (cosine distance)
+├── rag/
+│   └── rag_service.py        # Embed, search, get_context (all-MiniLM-L6-v2)
 ├── tools/
-│   ├── __init__.py         # Exports ToolWrapper
-│   ├── registry.py         # TOOL_REGISTRY + @register_tool decorator
-│   ├── params_models.py    # Pydantic BaseModel for each tool's parameters
-│   ├── basic_tools.py      # Tool implementations: calculator, get_datetime, web_search
-│   └── tool_wrapper.py     # ToolWrapper.call() + catalog()
+│   ├── registry.py           # TOOL_REGISTRY + @register_tool decorator
+│   ├── params_models.py      # Pydantic params for each tool
+│   ├── basic_tools.py        # calculator, get_datetime, web_search, search_documents
+│   └── tool_wrapper.py       # ToolWrapper.call() + catalog()
 ├── prompts/
-│   ├── registry.py         # PromptRegistry — loads YAML + renders with Jinja2
-│   ├── planner.yaml        # Planning assistant prompt
-│   ├── analyst.yaml        # Analytical assistant prompt
-│   ├── summary.yaml        # Summarization assistant prompt
-│   └── extract.yaml        # Extraction assistant prompt
-├── .env                    # API keys (not committed)
-├── .env.example            # Template for required API keys
-└── README.md
+│   ├── registry.py           # PromptRegistry — loads YAML + renders with Jinja2
+│   ├── planner.yaml          # Planning mode prompt
+│   ├── analyst.yaml          # Analysis mode prompt
+│   ├── summary.yaml          # Summarization mode prompt
+│   └── extract.yaml          # Extraction mode prompt
+├── alembic/                  # Database migrations
+│   └── versions/
+│       ├── dcbab4b1d6b8_...  # Initial: CREATE EXTENSION vector, documents, document_chunks
+│       └── 3579f0e1ebe7_...  # HNSW index on embedding column
+├── docker-compose.yml        # pgvector/pgvector:pg16 on port 5434
+├── samples/                  # Test documents (2 invoices, 2 contracts)
+├── extracted_data/           # JSON output from extraction pipeline
+├── .env                      # API keys + DB credentials (not committed)
+└── .env.example
 ```
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Python environment
 
 ```bash
-pip install pydantic httpx pyyaml jinja2 python-dotenv
+python3 -m venv .venv
+source .venv/bin/activate
+pip install anthropic google-genai langchain-text-splitters sentence-transformers \
+            sqlalchemy alembic pgvector psycopg2-binary pydantic \
+            httpx pyyaml jinja2 python-dotenv
 ```
 
-### 2. Configure API key
+### 2. Environment variables
 
 ```bash
 cp .env.example .env
-# Edit .env and add your Gemini API key
 ```
 
-### 3. Run the agent
+Add to `.env`:
+```
+ANTHROPIC_API_KEY=sk-...
+GEMINI_API_KEY=...
+
+POSTGRES_USER=demo
+POSTGRES_PASSWORD=demo123
+POSTGRES_DB=rag_demo
+```
+
+### 3. Start PostgreSQL with pgvector
 
 ```bash
-cd proiect
+docker compose up -d
+```
+
+### 4. Run database migrations
+
+```bash
+alembic upgrade head
+```
+
+This creates the `vector` extension, `documents` table, `document_chunks` table, and HNSW index.
+
+### 5. Run the extraction pipeline
+
+```bash
+python3 -c "
+from pipeline.pipeline import process
+from pathlib import Path
+
+for f in sorted(Path('samples').iterdir()):
+    print(f'\n=== Processing: {f.name} ===')
+    process(f)
+"
+```
+
+This processes each sample file through the full pipeline:
+1. Load the document
+2. Classify (invoice vs contract) using LLM
+3. Chunk if needed (contracts use first 3 chunks for extraction)
+4. Extract structured data into Pydantic models
+5. Save as JSON to `extracted_data/`
+6. Save to PostgreSQL (document + JSONB metadata)
+7. Embed chunks (500 char, all-MiniLM-L6-v2) and store in `document_chunks`
+
+### 6. Run the agent
+
+```bash
 python3 agent.py
 ```
 
-## LLM Providers
-
-The agent uses a factory pattern with automatic fallback:
-
-| Priority | Provider | Requires |
-|----------|----------|----------|
-| 1 | LiteLLM proxy | Docker containers running on :4000 |
-| 2 | Gemini direct | GEMINI_API_KEY in .env |
-| 3 | Ollama local | Ollama running on :11434 |
-
-If the first provider fails, the agent automatically tries the next one.
-
-### Using with LiteLLM (Docker)
-
-```bash
-cd LLM-container-inference-script
-cp ../proiect/.env .env
-docker-compose up -d
+Ask questions about your documents:
+```
+> Cine este furnizorul de pe factura 001?
+> Care sunt partile contractului de consultanta?
+> Ce suma totala apare pe factura 002?
 ```
 
 ## Tools
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
+| `search_documents` | Semantic search over stored documents (invoices, contracts) via RAG | `query: str`, `top_k: int` (default 3) |
 | `calculator` | Evaluates math expressions | `expression: str` |
-| `get_datetime` | Returns current date/time | `timezone: str` (default: UTC) |
+| `get_datetime` | Returns current date/time in a timezone | `timezone: str` (default UTC) |
 | `web_search` | Searches the web via DuckDuckGo | `query: str`, `max_results: int` |
 
-Tools are registered automatically using the `@register_tool` decorator. Each tool has Pydantic validation on its parameters.
+## LLM Providers
 
-## Prompts
+Both the agent and the pipeline use Claude as default with Gemini fallback:
 
-Prompts are stored as YAML files with Jinja2 templates for dynamic variables:
+| Component | Default | Fallback |
+|-----------|---------|----------|
+| Agent | Claude Haiku 4.5 (native tool use) | Gemini 2.5 Flash (OpenAI format) |
+| Pipeline | Claude Haiku 4.5 (fake tool trick) | Gemini 2.0 Flash (response_schema) |
 
-```yaml
-name: planner
-prompt: |
-  You are a {{ role }}, specialized in {{ domain }}.
-  Available tools: {{ tools }}
-```
+## Agent Modes
 
-Loaded and rendered at runtime via `PromptRegistry`.
+Switch modes at runtime with `/mode <name>`:
 
-### Agent Modes
+| Mode | Purpose |
+|------|---------|
+| `planner` | Breaks complex questions into steps |
+| `analyst` | Researches and provides detailed analysis |
+| `summary` | Returns short, concise answers |
+| `extract` | Pulls specific data points |
 
-The agent supports switching between prompt modes at runtime:
-
-| Mode | Purpose | Example question |
-|------|---------|-----------------|
-| `planner` | Breaks complex questions into steps | "What is 15% of 230 and what time is it in Tokyo?" |
-| `analyst` | Researches and provides detailed analysis | "Search for Rome and analyze the key facts" |
-| `summary` | Returns short, concise answers | "Search for Python and summarize it" |
-| `extract` | Pulls specific data points | "What time is it in London, Bucharest, and Tokyo?" |
-
-Commands during chat:
-- `/mode <name>` — switch to a different mode (resets conversation)
-- `/modes` — list available modes
-- `exit` — quit the agent
-
-## ReAct Pattern
-
-The agent follows a Think -> Act -> Observe loop:
-
-```
-User: "What is 25 * 47 and what time is it in Bucharest?"
-
-Iteration 1 (Think + Act):
-  -> calculator(expression="25 * 47")        -> 1175
-  -> get_datetime(timezone="Europe/Bucharest") -> 2026-05-25 00:28 EEST
-
-Iteration 2 (Final answer):
-  -> "25 * 47 = 1175. The time in Bucharest is 00:28 EEST."
-```
-
-Features:
-- `max_iterations` safety limit (default: 10)
-- Error handling — tool errors and rate limits are returned to the LLM as text, not crashes
-- Multiple tool calls per iteration
-- Session history — follow-up questions have full conversation context
-- Graceful provider fallback — if one LLM provider fails, the next one is tried automatically
+Commands: `/mode <name>`, `/modes`, `exit`
