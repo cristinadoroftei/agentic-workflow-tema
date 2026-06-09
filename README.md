@@ -57,6 +57,7 @@ proiect/
 │   └── versions/
 │       ├── dcbab4b1d6b8_...  # Initial: CREATE EXTENSION vector, documents, document_chunks
 │       └── 3579f0e1ebe7_...  # HNSW index on embedding column
+├── verify_db.py              # DB verification script (documents, chunks, hybrid search test)
 ├── docker-compose.yml        # pgvector/pgvector:pg16 on port 5434
 ├── samples/                  # Test documents (2 invoices, 2 contracts)
 ├── extracted_data/           # JSON output from extraction pipeline
@@ -128,7 +129,24 @@ This processes each sample file through the full pipeline:
 6. Save to PostgreSQL (document + JSONB metadata)
 7. Embed chunks (500 char, all-MiniLM-L6-v2) and store in `document_chunks`
 
-### 6. Run the agent
+### 6. Verify the database
+
+```bash
+python3 verify_db.py
+```
+
+This prints a summary of documents, chunks, metadata, and runs a hybrid search test.
+
+To explore manually with psql:
+```bash
+docker compose exec db psql -U demo -d rag_demo
+```
+```sql
+SELECT id, filename, metadata->>'doc_type' AS type FROM documents;
+SELECT document_id, count(*) FROM document_chunks GROUP BY document_id;
+```
+
+### 7. Run the agent
 
 ```bash
 python3 agent.py
